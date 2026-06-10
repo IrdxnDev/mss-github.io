@@ -190,10 +190,10 @@
             uploading: 'Загрузка...', selectFile: 'Выберите файл', enterVehicle: 'Введите название ТС', 
             moderationNote: 'Замечание модератора', addNote: 'Добавить замечание', conditionalNote: 'Замечание к условной публикации',
             photoConditionalNote: 'Фото принято условно. Замечание модератора', switchUser: 'Сменить пользователя', 
-            adminAccount: 'Администратор', demoAccount: 'Демо пользователь'
+            adminAccount: 'Администратор', demoAccount: 'Демо пользователь', loading: 'Загрузка данных...'
         },
-        be: { siteName: 'Multi Spotting Site', journal: 'Часопіс', upload: 'Загрузка', editVehicle: 'Прапанаваць змены', spottingStrip: 'Стужка спотынгу', uploading: 'Загрузка...', switchUser: 'Змяніць карыстальніка' },
-        en: { siteName: 'Multi Spotting Site', journal: 'Journal', upload: 'Upload', editVehicle: 'Suggest edit', spottingStrip: 'Spotting feed', uploading: 'Uploading...', switchUser: 'Switch user' }
+        be: { siteName: 'Multi Spotting Site', journal: 'Часопіс', upload: 'Загрузка', editVehicle: 'Прапанаваць змены', spottingStrip: 'Стужка спотынгу', uploading: 'Загрузка...', switchUser: 'Змяніць карыстальніка', loading: 'Загрузка дадзеных...' },
+        en: { siteName: 'Multi Spotting Site', journal: 'Journal', upload: 'Upload', editVehicle: 'Suggest edit', spottingStrip: 'Spotting feed', uploading: 'Uploading...', switchUser: 'Switch user', loading: 'Loading data...' }
     };
     
     let curLang = localStorage.getItem('mss_lang') || 'ru';
@@ -226,95 +226,229 @@
     function formatLoc(loc) { return [loc.country, loc.city, loc.street].filter(Boolean).join(', ') || '—'; }
     function escapeHtml(str) { return String(str || '').replace(/[&<>]/g, function(m){ return m==='&'?'&amp;':m==='<'?'&lt;':'&gt;';}); }
 
-    let vehiclesProfiles = {}, users = [], allPhotos = [], votes = [], comments = [], notifications = [], photoViews = [], editRequests = [];
+    // ========== INDEXEDDB ==========
+    const DB_NAME = 'MultiSpottingDB';
+    const DB_VERSION = 1;
+    let db = null;
     let currentUser = null;
     let currentMap = null;
     let currentPage = 1;
+    let allPhotosCache = [];
+    let usersCache = [];
+    let votesCache = [];
+    let commentsCache = [];
+    let notificationsCache = [];
+    let photoViewsCache = [];
+    let editRequestsCache = [];
+    let vehiclesProfilesCache = {};
     const ITEMS_PER_PAGE = 9;
 
     function showToast(msg) { let t = document.createElement('div'); t.className = 'toast'; t.innerHTML = '<i class="fas fa-check-circle"></i> ' + msg; document.body.appendChild(t); setTimeout(()=>t.remove(), 3000); }
-    function addNotification(userId, title, message) { let n = { id: Date.now(), userId, title, message, read: false, createdAt: Date.now() }; notifications.push(n); localStorage.setItem('mss_notifications', JSON.stringify(notifications)); if(currentUser?.id === userId) showToast(message); }
-    function updateNotifBadge() { let b = document.getElementById('notifBadge'); if(b) { let count = notifications.filter(n=>n.userId===currentUser?.id && !n.read).length; b.textContent = count || ''; } }
-    function saveAll() { 
-        localStorage.setItem('mss_users', JSON.stringify(users)); 
-        localStorage.setItem('mss_photos', JSON.stringify(allPhotos)); 
-        localStorage.setItem('mss_votes', JSON.stringify(votes)); 
-        localStorage.setItem('mss_comments', JSON.stringify(comments)); 
-        localStorage.setItem('mss_vehicles_profiles', JSON.stringify(vehiclesProfiles)); 
-        localStorage.setItem('mss_notifications', JSON.stringify(notifications));
-        localStorage.setItem('mss_photo_views', JSON.stringify(photoViews));
-        localStorage.setItem('mss_edit_requests', JSON.stringify(editRequests));
+    
+    function updateNotifBadge() { 
+        let b = document.getElementById('notifBadge'); 
+        if(b && currentUser) { 
+            let count = notificationsCache.filter(n => n.userId === currentUser.id && !n.read).length; 
+            b.textContent = count || ''; 
+        } 
     }
 
-    function canUserVote(user) {
-        if(user.role === 'admin') return true;
-        if(user.banVote) return false;
-        let userPhotosCount = allPhotos.filter(p => p.userId === user.id && (p.status === 'approved' || p.status === 'conditional')).length;
-        return userPhotosCount >= 3;
+    // Инициализация IndexedDB
+    function initDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                db = request.result;
+                resolve(db);
+            };
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                
+                // Таблица пользователей
+                if (!db.objectStoreNames.contains('users')) {
+                    const usersStore = db.createObjectStore('users', { keyPath: 'id' });
+                    usersStore.createIndex('email', 'email', { unique: true });
+                }
+                
+                // Таблица фото
+                if (!db.objectStoreNames.contains('photos')) {
+                    const photosStore = db.createObjectStore('photos', { keyPath: 'id' });
+                    photosStore.createIndex('userId', 'userId');
+                    photosStore.createIndex('status', 'status');
+                    photosStore.createIndex('vehicle', 'vehicle');
+                    photosStore.createIndex('createdAt', 'createdAt');
+                }
+                
+                // Таблица голосов
+                if (!db.objectStoreNames.contains('votes')) {
+                    const votesStore = db.createObjectStore('votes', { keyPath: 'id' });
+                    votesStore.createIndex('photoId', 'photoId');
+                    votesStore.createIndex('userId', 'userId');
+                }
+                
+                // Таблица комментариев
+                if (!db.objectStoreNames.contains('comments')) {
+                    const commentsStore = db.createObjectStore('comments', { keyPath: 'id' });
+                    commentsStore.createIndex('photoId', 'photoId');
+                    commentsStore.createIndex('userId', 'userId');
+                }
+                
+                // Таблица уведомлений
+                if (!db.objectStoreNames.contains('notifications')) {
+                    const notifStore = db.createObjectStore('notifications', { keyPath: 'id' });
+                    notifStore.createIndex('userId', 'userId');
+                }
+                
+                // Таблица просмотров
+                if (!db.objectStoreNames.contains('photoViews')) {
+                    const viewsStore = db.createObjectStore('photoViews', { keyPath: 'id' });
+                    viewsStore.createIndex('photoId', 'photoId');
+                    viewsStore.createIndex('userId', 'userId');
+                }
+                
+                // Таблица заявок на редактирование
+                if (!db.objectStoreNames.contains('editRequests')) {
+                    const requestsStore = db.createObjectStore('editRequests', { keyPath: 'id' });
+                    requestsStore.createIndex('status', 'status');
+                }
+                
+                // Таблица профилей ТС
+                if (!db.objectStoreNames.contains('vehiclesProfiles')) {
+                    db.createObjectStore('vehiclesProfiles', { keyPath: 'vehicle' });
+                }
+            };
+        });
     }
 
-    function canUserComment(user) {
-        if(user.role === 'admin') return true;
-        return !user.banComment;
-    }
-
-    function recordView(photoId) {
-        if(!currentUser) return;
-        let existing = photoViews.find(v => v.photoId === photoId && v.userId === currentUser.id);
-        if(!existing) {
-            photoViews.push({ photoId, userId: currentUser.id, viewedAt: Date.now() });
-            let photo = allPhotos.find(p => p.id === photoId);
-            if(photo) photo.views = (photo.views || 0) + 1;
-            saveAll();
+    // Загрузка всех данных из DB в кэш
+    async function loadAllData() {
+        const stores = ['users', 'photos', 'votes', 'comments', 'notifications', 'photoViews', 'editRequests', 'vehiclesProfiles'];
+        for (const storeName of stores) {
+            const data = await getAllFromStore(storeName);
+            switch(storeName) {
+                case 'users': usersCache = data; break;
+                case 'photos': allPhotosCache = data; break;
+                case 'votes': votesCache = data; break;
+                case 'comments': commentsCache = data; break;
+                case 'notifications': notificationsCache = data; break;
+                case 'photoViews': photoViewsCache = data; break;
+                case 'editRequests': editRequestsCache = data; break;
+                case 'vehiclesProfiles':
+                    vehiclesProfilesCache = {};
+                    data.forEach(item => { vehiclesProfilesCache[item.vehicle] = item; });
+                    break;
+            }
         }
     }
 
-    function getUserVote(photoId) {
-        let v = votes.find(v => v.photoId === photoId && v.userId === currentUser?.id);
-        return v ? v.value : 0;
+    function getAllFromStore(storeName) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(storeName, 'readonly');
+            const store = transaction.objectStore(storeName);
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
     }
 
-    function initData() {
-        let u = localStorage.getItem('mss_users');
-        if(u) users = JSON.parse(u);
-        else users = [
-            { id: 'admin1', name: 'Администратор', email: 'admin@multispotting.com', password: 'admin123', role: 'admin', bio: 'Главный администратор Multi Spotting Site', city: 'Москва', website: 'https://multispotting.com', telegram: '@multispotting', banVote: false, banComment: false }, 
-            { id: 'demo1', name: 'Демо Пользователь', email: 'demo@mail.ru', password: 'demo123', role: 'user', bio: 'Люблю фотографировать технику', city: 'Минск', website: '', telegram: '@demo', banVote: false, banComment: false }
-        ];
-        let p = localStorage.getItem('mss_photos');
-        if(p) allPhotos = JSON.parse(p);
-        else allPhotos = [
-            { id: '1', userId: 'admin1', url: 'https://picsum.photos/id/111/800/600', thumb: 'https://picsum.photos/id/111/300/200', vehicle: 'BMW M3 E46', loc: { country: 'Германия', city: 'Мюнхен', street: 'BMW Strasse', lat: 48.1351, lng: 11.5820 }, status: 'approved', rating: 25, likes: 18, dislikes: 2, views: 45, createdAt: Date.now(), moderationNote: '' },
-            { id: '2', userId: 'demo1', url: 'https://picsum.photos/id/222/800/600', thumb: 'https://picsum.photos/id/222/300/200', vehicle: 'Mercedes Actros', loc: { country: 'Германия', city: 'Штутгарт', lat: 48.7758, lng: 9.1829 }, status: 'approved', rating: 20, likes: 15, dislikes: 1, views: 32, createdAt: Date.now() - 3600000, moderationNote: '' },
-            { id: '3', userId: 'admin1', url: 'https://picsum.photos/id/333/800/600', thumb: 'https://picsum.photos/id/333/300/200', vehicle: 'Porsche 911 GT3', loc: { country: 'Германия', city: 'Штутгарт', lat: 48.7758, lng: 9.1829 }, status: 'approved', rating: 28, likes: 20, dislikes: 1, views: 67, createdAt: Date.now() - 7200000, moderationNote: '' }
-        ];
-        votes = JSON.parse(localStorage.getItem('mss_votes') || '[]');
-        comments = JSON.parse(localStorage.getItem('mss_comments') || '[]');
-        notifications = JSON.parse(localStorage.getItem('mss_notifications') || '[]');
-        photoViews = JSON.parse(localStorage.getItem('mss_photo_views') || '[]');
-        editRequests = JSON.parse(localStorage.getItem('mss_edit_requests') || '[]');
-        let vp = localStorage.getItem('mss_vehicles_profiles');
-        if(vp) vehiclesProfiles = JSON.parse(vp);
-        else vehiclesProfiles = { 
-            'BMW M3 E46': { model: 'BMW M3 E46', year: 2003, engine: '3.2 л S54', state: 'oper', purpose: 'Спорт-купе' },
-            'Mercedes Actros': { model: 'Actros MP4', year: 2018, engine: '12.8 л OM471', state: 'oper', purpose: 'Магистральный тягач' }
-        };
-        allPhotos.forEach(p => { if(p.likes === undefined) p.likes = 0; if(p.dislikes === undefined) p.dislikes = 0; if(p.views === undefined) p.views = 0; if(p.moderationNote === undefined) p.moderationNote = ''; });
-        users.forEach(u => { if(u.banVote === undefined) u.banVote = false; if(u.banComment === undefined) u.banComment = false; if(u.bio === undefined) u.bio = ''; if(u.city === undefined) u.city = ''; if(u.website === undefined) u.website = ''; if(u.telegram === undefined) u.telegram = ''; });
-        saveAll();
+    function addToStore(storeName, item) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(storeName, 'readwrite');
+            const store = transaction.objectStore(storeName);
+            const request = store.add(item);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    function putToStore(storeName, item) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(storeName, 'readwrite');
+            const store = transaction.objectStore(storeName);
+            const request = store.put(item);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    function deleteFromStore(storeName, id) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(storeName, 'readwrite');
+            const store = transaction.objectStore(storeName);
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // Инициализация начальных данных
+    async function initData() {
+        await initDB();
+        await loadAllData();
         
-        // Автоматически входим как администратор при первом запуске
+        // Проверяем, есть ли пользователи
+        if (usersCache.length === 0) {
+            // Создаём начальных пользователей
+            const admin = { id: 'admin_' + Date.now(), name: 'Администратор', email: 'admin@multispotting.com', password: 'admin123', role: 'admin', bio: 'Главный администратор Multi Spotting Site', city: 'Москва', website: 'https://multispotting.com', telegram: '@multispotting', banVote: false, banComment: false, createdAt: Date.now() };
+            const demo = { id: 'demo_' + (Date.now() + 1000), name: 'Демо Пользователь', email: 'demo@mail.ru', password: 'demo123', role: 'user', bio: 'Люблю фотографировать технику', city: 'Минск', website: '', telegram: '@demo', banVote: false, banComment: false, createdAt: Date.now() };
+            await addToStore('users', admin);
+            await addToStore('users', demo);
+            usersCache = [admin, demo];
+            
+            // Создаём начальные фото
+            const photos = [
+                { id: 'photo_1_' + Date.now(), userId: admin.id, url: 'https://picsum.photos/id/111/800/600', thumb: 'https://picsum.photos/id/111/300/200', vehicle: 'BMW M3 E46', loc: { country: 'Германия', city: 'Мюнхен', street: 'BMW Strasse', lat: 48.1351, lng: 11.5820 }, status: 'approved', rating: 25, likes: 18, dislikes: 2, views: 45, createdAt: Date.now(), moderationNote: '' },
+                { id: 'photo_2_' + (Date.now() + 1000), userId: demo.id, url: 'https://picsum.photos/id/222/800/600', thumb: 'https://picsum.photos/id/222/300/200', vehicle: 'Mercedes Actros', loc: { country: 'Германия', city: 'Штутгарт', lat: 48.7758, lng: 9.1829 }, status: 'approved', rating: 20, likes: 15, dislikes: 1, views: 32, createdAt: Date.now() - 3600000, moderationNote: '' },
+                { id: 'photo_3_' + (Date.now() + 2000), userId: admin.id, url: 'https://picsum.photos/id/333/800/600', thumb: 'https://picsum.photos/id/333/300/200', vehicle: 'Porsche 911 GT3', loc: { country: 'Германия', city: 'Штутгарт', lat: 48.7758, lng: 9.1829 }, status: 'approved', rating: 28, likes: 20, dislikes: 1, views: 67, createdAt: Date.now() - 7200000, moderationNote: '' }
+            ];
+            for (const photo of photos) {
+                await addToStore('photos', photo);
+            }
+            allPhotosCache = photos;
+            
+            // Создаём профили ТС
+            const profiles = [
+                { vehicle: 'BMW M3 E46', model: 'BMW M3 E46', year: 2003, engine: '3.2 л S54', state: 'oper', purpose: 'Спорт-купе' },
+                { vehicle: 'Mercedes Actros', model: 'Actros MP4', year: 2018, engine: '12.8 л OM471', state: 'oper', purpose: 'Магистральный тягач' },
+                { vehicle: 'Porsche 911 GT3', model: '911 GT3', year: 2022, engine: '4.0 л', state: 'oper', purpose: 'Спорткар' }
+            ];
+            for (const profile of profiles) {
+                await addToStore('vehiclesProfiles', profile);
+                vehiclesProfilesCache[profile.vehicle] = profile;
+            }
+        }
+        
+        // Нормализация данных
+        allPhotosCache.forEach(p => { 
+            if(p.likes === undefined) p.likes = 0; 
+            if(p.dislikes === undefined) p.dislikes = 0; 
+            if(p.views === undefined) p.views = 0; 
+            if(p.moderationNote === undefined) p.moderationNote = ''; 
+        });
+        
+        usersCache.forEach(u => { 
+            if(u.banVote === undefined) u.banVote = false; 
+            if(u.banComment === undefined) u.banComment = false; 
+            if(u.bio === undefined) u.bio = ''; 
+            if(u.city === undefined) u.city = ''; 
+            if(u.website === undefined) u.website = ''; 
+            if(u.telegram === undefined) u.telegram = ''; 
+        });
+        
+        // Восстановление сессии
         let sess = localStorage.getItem('mss_session');
         if(sess) { 
             try { 
                 let s = JSON.parse(sess); 
-                let uu = users.find(u=>u.id===s.userId); 
+                let uu = usersCache.find(u => u.id === s.userId); 
                 if(uu && s.expires > Date.now()) { 
                     currentUser = JSON.parse(JSON.stringify(uu)); 
                     delete currentUser.password; 
                 } else {
-                    // Сессия просрочена, входим как админ
-                    let admin = users.find(u=>u.role==='admin');
+                    let admin = usersCache.find(u => u.role === 'admin');
                     if(admin) {
                         currentUser = JSON.parse(JSON.stringify(admin));
                         delete currentUser.password;
@@ -323,14 +457,44 @@
                 }
             } catch(e){}
         } else {
-            // Нет сессии, входим как админ
-            let admin = users.find(u=>u.role==='admin');
+            let admin = usersCache.find(u => u.role === 'admin');
             if(admin) {
                 currentUser = JSON.parse(JSON.stringify(admin));
                 delete currentUser.password;
                 localStorage.setItem('mss_session', JSON.stringify({ userId: admin.id, expires: Date.now() + 7 * 86400000 }));
             }
         }
+    }
+
+    function canUserVote(user) {
+        if(user.role === 'admin') return true;
+        if(user.banVote) return false;
+        return true;
+    }
+
+    function canUserComment(user) {
+        if(user.role === 'admin') return true;
+        return !user.banComment;
+    }
+
+    async function recordView(photoId) {
+        if(!currentUser) return;
+        let existing = photoViewsCache.find(v => v.photoId === photoId && v.userId === currentUser.id);
+        if(!existing) {
+            const newView = { id: Date.now() + '_' + Math.random().toString(36).substr(2, 6), photoId, userId: currentUser.id, viewedAt: Date.now() };
+            await addToStore('photoViews', newView);
+            photoViewsCache.push(newView);
+            let photo = allPhotosCache.find(p => p.id === photoId);
+            if(photo) {
+                photo.views = (photo.views || 0) + 1;
+                await putToStore('photos', photo);
+            }
+        }
+    }
+
+    function getUserVote(photoId) {
+        let v = votesCache.find(v => v.photoId === photoId && v.userId === currentUser?.id);
+        return v ? v.value : 0;
     }
 
     function initMap(containerId, lat, lng, onSelect) {
@@ -371,11 +535,87 @@
         }
     }
 
+    async function addNotification(userId, title, message) { 
+        let n = { id: Date.now() + '_' + Math.random().toString(36).substr(2, 6), userId, title, message, read: false, createdAt: Date.now() }; 
+        await addToStore('notifications', n);
+        notificationsCache.push(n);
+        if(currentUser?.id === userId) showToast(message); 
+    }
+
+    async function saveAll() {
+        // Данные уже синхронизированы с БД через отдельные вызовы
+    }
+
+    async function quickVote(photoId, val) {
+        if(!currentUser) { alert(T('loginRequired')); return; }
+        if(!canUserVote(currentUser)) { alert(T('voteRestricted')); return; }
+        let photo = allPhotosCache.find(p => p.id === photoId);
+        if(photo.userId === currentUser.id) { alert('Нельзя голосовать за своё фото'); return; }
+        let existing = votesCache.find(v => v.photoId === photoId && v.userId === currentUser.id);
+        if(existing) {
+            if(existing.value === val) return;
+            if(val === 1) { photo.likes = (photo.likes || 0) + 1; photo.dislikes = (photo.dislikes || 0) - (existing.value === -1 ? 1 : 0); }
+            else if(val === -1) { photo.dislikes = (photo.dislikes || 0) + 1; photo.likes = (photo.likes || 0) - (existing.value === 1 ? 1 : 0); }
+            photo.rating += (val - existing.value);
+            existing.value = val;
+            await putToStore('votes', existing);
+            await putToStore('photos', photo);
+        } else {
+            if(val === 1) photo.likes = (photo.likes || 0) + 1;
+            else photo.dislikes = (photo.dislikes || 0) + 1;
+            photo.rating += val;
+            const newVote = { id: Date.now() + '_' + Math.random().toString(36).substr(2, 6), photoId, userId: currentUser.id, value: val };
+            await addToStore('votes', newVote);
+            votesCache.push(newVote);
+            await putToStore('photos', photo);
+        }
+        if(window.currentView === 'home') filterGallery();
+        else if(window.currentView === 'vehicle') showVehiclePage(photo.vehicle);
+        else if(window.currentView === 'country') showCountryPhotos(window.currentCountry);
+        else if(window.currentView === 'journal') showJournal();
+        else if(window.currentView === 'profile' && window.currentProfileUser) showUserProfile(window.currentProfileUser);
+    }
+
+    async function deletePhoto(photoId) {
+        let photo = allPhotosCache.find(p => p.id === photoId);
+        if(!photo) return;
+        if(currentUser?.role !== 'admin') { alert('Только администратор может удалять фото'); return; }
+        if(confirm(T('confirmDeletePhoto'))) {
+            await deleteFromStore('photos', photoId);
+            allPhotosCache = allPhotosCache.filter(p => p.id !== photoId);
+            
+            const toDeleteVotes = votesCache.filter(v => v.photoId === photoId);
+            for (const v of toDeleteVotes) {
+                await deleteFromStore('votes', v.id);
+            }
+            votesCache = votesCache.filter(v => v.photoId !== photoId);
+            
+            const toDeleteComments = commentsCache.filter(c => c.photoId === photoId);
+            for (const c of toDeleteComments) {
+                await deleteFromStore('comments', c.id);
+            }
+            commentsCache = commentsCache.filter(c => c.photoId !== photoId);
+            
+            const toDeleteViews = photoViewsCache.filter(v => v.photoId === photoId);
+            for (const v of toDeleteViews) {
+                await deleteFromStore('photoViews', v.id);
+            }
+            photoViewsCache = photoViewsCache.filter(v => v.photoId !== photoId);
+            
+            showToast('Фото удалено');
+            if(window.currentView === 'journal') showJournal();
+            else if(window.currentView === 'admin') showAdminPanel();
+            else if(window.currentView === 'country') showCountryPhotos(window.currentCountry);
+            else if(window.currentView === 'profile' && window.currentProfileUser) showUserProfile(window.currentProfileUser);
+            else renderHome();
+        }
+    }
+
     function photoCard(photo, showActions = false) {
         let badgeClass = getBadgeClass(photo.status);
         let statusText = photo.status === 'approved' ? T('approved') : (photo.status === 'conditional' ? T('conditional') : (photo.status === 'rejected' ? T('rejected') : T('pending')));
         let canEdit = currentUser && currentUser.role === 'admin';
-        let author = users.find(u => u.id === photo.userId);
+        let author = usersCache.find(u => u.id === photo.userId);
         let authorName = author?.name || '?';
         let userVote = getUserVote(photo.id);
         let canVote = currentUser && canUserVote(currentUser);
@@ -396,7 +636,7 @@
                 <div class="photo-stats">
                     <span><i class="fas fa-user"></i> <span onclick="event.stopPropagation(); showUserProfile('${photo.userId}')" style="cursor:pointer; color:#4a9eff;">${authorName}</span></span>
                     <span><i class="fas fa-eye"></i> ${photo.views || 0} ${T('views')}</span>
-                    <span><i class="fas fa-comment"></i> ${comments.filter(c=>c.photoId===photo.id).length}</span>
+                    <span><i class="fas fa-comment"></i> ${commentsCache.filter(c=>c.photoId===photo.id).length}</span>
                 </div>
                 <div class="vote-buttons">
                     ${currentUser ? (canVote ? `<button class="vote-btn vote-up ${userVote === 1 ? 'vote-active-up' : ''}" onclick="event.stopPropagation(); quickVote('${photo.id}', 1)">+ ${photo.likes || 0}</button>
@@ -408,53 +648,8 @@
         </div>`;
     }
 
-    window.quickVote = function(photoId, val) {
-        if(!currentUser) { alert(T('loginRequired')); return; }
-        if(!canUserVote(currentUser)) { alert(T('voteRestricted')); return; }
-        let photo = allPhotos.find(p => p.id === photoId);
-        if(photo.userId === currentUser.id) { alert('Нельзя голосовать за своё фото'); return; }
-        let existing = votes.find(v => v.photoId === photoId && v.userId === currentUser.id);
-        if(existing) {
-            if(existing.value === val) return;
-            if(val === 1) { photo.likes = (photo.likes || 0) + 1; photo.dislikes = (photo.dislikes || 0) - (existing.value === -1 ? 1 : 0); }
-            else if(val === -1) { photo.dislikes = (photo.dislikes || 0) + 1; photo.likes = (photo.likes || 0) - (existing.value === 1 ? 1 : 0); }
-            photo.rating += (val - existing.value);
-            existing.value = val;
-        } else {
-            if(val === 1) photo.likes = (photo.likes || 0) + 1;
-            else photo.dislikes = (photo.dislikes || 0) + 1;
-            photo.rating += val;
-            votes.push({ photoId, userId: currentUser.id, value: val });
-        }
-        saveAll();
-        if(window.currentView === 'home') filterGallery();
-        else if(window.currentView === 'vehicle') showVehiclePage(photo.vehicle);
-        else if(window.currentView === 'country') showCountryPhotos(window.currentCountry);
-        else if(window.currentView === 'journal') showJournal();
-        else if(window.currentView === 'profile' && window.currentProfileUser) showUserProfile(window.currentProfileUser);
-    };
-
-    window.deletePhoto = function(photoId) {
-        let photo = allPhotos.find(p => p.id === photoId);
-        if(!photo) return;
-        if(currentUser?.role !== 'admin') { alert('Только администратор может удалять фото'); return; }
-        if(confirm(T('confirmDeletePhoto'))) {
-            allPhotos = allPhotos.filter(p => p.id !== photoId);
-            votes = votes.filter(v => v.photoId !== photoId);
-            comments = comments.filter(c => c.photoId !== photoId);
-            photoViews = photoViews.filter(v => v.photoId !== photoId);
-            saveAll();
-            showToast('Фото удалено');
-            if(window.currentView === 'journal') showJournal();
-            else if(window.currentView === 'admin') showAdminPanel();
-            else if(window.currentView === 'country') showCountryPhotos(window.currentCountry);
-            else if(window.currentView === 'profile' && window.currentProfileUser) showUserProfile(window.currentProfileUser);
-            else renderHome();
-        }
-    };
-
-    window.editPhoto = function(photoId) {
-        let photo = allPhotos.find(p => p.id === photoId);
+    async function editPhoto(photoId) {
+        let photo = allPhotosCache.find(p => p.id === photoId);
         if(!photo) return;
         if(currentUser?.role !== 'admin') { alert('Только администратор может редактировать фото'); return; }
         let modal = document.createElement('div'); modal.className = 'edit-modal';
@@ -472,10 +667,10 @@
             document.getElementById('editLat').value = lat.toFixed(6);
             document.getElementById('editLng').value = lng.toFixed(6);
         });
-    };
+    }
 
-    window.savePhotoEdit = function(photoId) {
-        let photo = allPhotos.find(p => p.id === photoId);
+    async function savePhotoEdit(photoId) {
+        let photo = allPhotosCache.find(p => p.id === photoId);
         if(photo) {
             photo.vehicle = document.getElementById('editVeh').value.trim();
             photo.loc.country = document.getElementById('editCountry').value;
@@ -483,19 +678,22 @@
             photo.loc.street = document.getElementById('editStreet').value;
             photo.loc.lat = parseFloat(document.getElementById('editLat').value) || 55.75;
             photo.loc.lng = parseFloat(document.getElementById('editLng').value) || 37.62;
-            if(!vehiclesProfiles[photo.vehicle]) vehiclesProfiles[photo.vehicle] = { model: photo.vehicle, state: 'unknown', purpose: '—' };
-            saveAll();
+            if(!vehiclesProfilesCache[photo.vehicle]) {
+                vehiclesProfilesCache[photo.vehicle] = { vehicle: photo.vehicle, model: photo.vehicle, state: 'unknown', purpose: '—' };
+                await addToStore('vehiclesProfiles', vehiclesProfilesCache[photo.vehicle]);
+            }
+            await putToStore('photos', photo);
             document.querySelector('.edit-modal')?.remove();
             showToast('Фото обновлено');
             if(window.currentView === 'journal') showJournal();
             else if(window.currentView === 'admin') showAdminPanel();
             else renderHome();
         }
-    };
+    }
 
-    window.showJournal = function() {
+    async function showJournal() {
         window.currentView = 'journal';
-        let myPhotos = allPhotos.filter(p => p.userId === currentUser.id);
+        let myPhotos = allPhotosCache.filter(p => p.userId === currentUser.id);
         document.getElementById('mainContent').innerHTML = `<div class="section">
             <h2><i class="fas fa-history"></i> ${T('journal')} <span style="font-size:0.9rem; opacity:0.7;">(${myPhotos.length})</span></h2>
             ${myPhotos.length === 0 ? `<div style="text-align:center; padding:40px;">${T('noPhotos')}</div>` : `
@@ -531,14 +729,14 @@
                 }).join('')}
             </div>`}
         </div>`;
-    };
+    }
 
-    window.showUserProfile = function(userId) {
+    async function showUserProfile(userId) {
         window.currentView = 'profile';
         window.currentProfileUser = userId;
-        let targetUser = users.find(u => u.id === userId);
+        let targetUser = usersCache.find(u => u.id === userId);
         if(!targetUser) return;
-        let userPhotos = allPhotos.filter(p => p.userId === userId && (p.status === 'approved' || p.status === 'conditional'));
+        let userPhotos = allPhotosCache.filter(p => p.userId === userId && (p.status === 'approved' || p.status === 'conditional'));
         let canEdit = currentUser?.id === userId || currentUser?.role === 'admin';
         let photoCount = userPhotos.length;
         let canVoteStatus = canUserVote(targetUser);
@@ -552,7 +750,7 @@
                     <div>${targetUser.email}</div>
                     <div>Роль: ${targetUser.role === 'admin' ? 'Администратор' : 'Пользователь'}</div>
                     <div>Фото: ${photoCount}</div>
-                    <div>Статус голосования: ${canVoteStatus ? 'Разрешено' : 'Запрещено (нужно 3 фото)'}</div>
+                    <div>Статус голосования: ${canVoteStatus ? 'Разрешено' : 'Запрещено'}</div>
                     <div>Статус комментариев: ${canUserComment(targetUser) ? 'Разрешено' : 'Запрещено администратором'}</div>
                 </div>
             </div>
@@ -574,30 +772,30 @@
             <h3 style="margin-top:20px;"><i class="fas fa-images"></i> Фотографии пользователя (${photoCount})</h3>
             <div class="photo-grid">${userPhotos.map(p => photoCard(p, currentUser?.role === 'admin')).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>'}</div>
         </div>`;
-    };
+    }
 
-    window.toggleBanVote = function(userId) {
-        let user = users.find(u => u.id === userId);
+    async function toggleBanVote(userId) {
+        let user = usersCache.find(u => u.id === userId);
         if(user) {
             user.banVote = !user.banVote;
-            saveAll();
+            await putToStore('users', user);
             showToast(`Голосование ${user.banVote ? 'запрещено' : 'разрешено'} для ${user.name}`);
             showUserProfile(userId);
         }
-    };
+    }
 
-    window.toggleBanComment = function(userId) {
-        let user = users.find(u => u.id === userId);
+    async function toggleBanComment(userId) {
+        let user = usersCache.find(u => u.id === userId);
         if(user) {
             user.banComment = !user.banComment;
-            saveAll();
+            await putToStore('users', user);
             showToast(`Комментирование ${user.banComment ? 'запрещено' : 'разрешено'} для ${user.name}`);
             showUserProfile(userId);
         }
-    };
+    }
 
-    window.editOwnProfile = function() {
-        let user = users.find(u => u.id === currentUser.id);
+    async function editOwnProfile() {
+        let user = usersCache.find(u => u.id === currentUser.id);
         let modal = document.createElement('div'); modal.className = 'edit-modal';
         modal.innerHTML = `<div><h3><i class="fas fa-edit"></i> ${T('editProfile')}</h3>
             <div class="form-group"><label>Имя</label><input id="editName" value="${escapeHtml(user.name)}"></div>
@@ -608,35 +806,35 @@
             <button class="btn btn-success" onclick="saveProfileEdit()">${T('save')}</button>
             <button class="btn" onclick="this.closest('.edit-modal').remove()">${T('close')}</button></div>`;
         document.body.appendChild(modal);
-    };
+    }
 
-    window.saveProfileEdit = function() {
-        let user = users.find(u => u.id === currentUser.id);
+    async function saveProfileEdit() {
+        let user = usersCache.find(u => u.id === currentUser.id);
         if(user) {
             user.name = document.getElementById('editName').value;
             user.bio = document.getElementById('editBio').value;
             user.city = document.getElementById('editCity').value;
             user.website = document.getElementById('editWebsite').value;
             user.telegram = document.getElementById('editTelegram').value;
-            saveAll();
+            await putToStore('users', user);
             currentUser.name = user.name;
             document.querySelector('.edit-modal')?.remove();
             showToast('Профиль обновлён');
             showUserProfile(currentUser.id);
             renderHome();
         }
-    };
+    }
 
-    window.showAdminPanel = function() {
+    async function showAdminPanel() {
         if(currentUser?.role !== 'admin') return;
         window.currentView = 'admin';
-        let pending = allPhotos.filter(p => p.status === 'pending');
-        let pendingRequests = editRequests.filter(r => r.status === 'pending');
+        let pending = allPhotosCache.filter(p => p.status === 'pending');
+        let pendingRequests = editRequestsCache.filter(r => r.status === 'pending');
         document.getElementById('mainContent').innerHTML = `<div class="section">
             <h2><i class="fas fa-cogs"></i> ${T('adminPanel')}</h2>
             <div class="admin-stats">
-                <div class="stat-card"><div class="stat-number">${users.length}</div><div>${T('users')}</div></div>
-                <div class="stat-card"><div class="stat-number">${allPhotos.length}</div><div>${T('totalPhotos')}</div></div>
+                <div class="stat-card"><div class="stat-number">${usersCache.length}</div><div>${T('users')}</div></div>
+                <div class="stat-card"><div class="stat-number">${allPhotosCache.length}</div><div>${T('totalPhotos')}</div></div>
                 <div class="stat-card"><div class="stat-number">${pending.length}</div><div>${T('onModeration')}</div></div>
                 <div class="stat-card"><div class="stat-number">${pendingRequests.length}</div><div>${T('editRequests')}</div></div>
             </div>
@@ -659,7 +857,7 @@
                 filterAdminPhotos();
             } else {
                 content.innerHTML = `<div id="adminUserList"></div>`;
-                document.getElementById('adminUserList').innerHTML = users.map(u => `<div class="user-card"><i class="fas fa-user-circle"></i> <strong>${u.name}</strong> (${u.email}) — роль: ${u.role} 
+                document.getElementById('adminUserList').innerHTML = usersCache.map(u => `<div class="user-card"><i class="fas fa-user-circle"></i> <strong>${u.name}</strong> (${u.email}) — роль: ${u.role} 
                     <select id="role_${u.id}" style="margin-left:auto;"><option ${u.role==='user'?'selected':''}>user</option><option ${u.role==='admin'?'selected':''}>admin</option></select>
                     <button class="btn" onclick="changeUserRole('${u.id}')"><i class="fas fa-save"></i> ${T('save')}</button>
                     <button class="btn" onclick="showUserProfile('${u.id}')"><i class="fas fa-eye"></i></button>
@@ -672,7 +870,7 @@
         window.filterAdminPhotos = function() {
             let search = document.getElementById('adminSearch')?.value.toLowerCase() || '';
             let status = document.getElementById('adminStatusFilter')?.value || 'all';
-            let filtered = allPhotos.filter(p => {
+            let filtered = allPhotosCache.filter(p => {
                 let matchSearch = p.vehicle.toLowerCase().includes(search) || (p.loc.country || '').toLowerCase().includes(search);
                 let matchStatus = status === 'all' || p.status === status;
                 return matchSearch && matchStatus;
@@ -681,7 +879,7 @@
             if(grid) grid.innerHTML = filtered.map(p => photoCard(p, true)).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>';
         };
         switchAdminTab('moderation');
-    };
+    }
 
     function requestCard(req) {
         let changesHtml = Object.entries(req.changes).map(([k,v]) => `<div><strong>${k}:</strong> ${v || '—'}</div>`).join('');
@@ -702,31 +900,32 @@
         </div>`;
     }
 
-    window.approveEditRequest = function(requestId) {
-        let req = editRequests.find(r => r.id == requestId);
+    async function approveEditRequest(requestId) {
+        let req = editRequestsCache.find(r => r.id == requestId);
         if(req) {
-            vehiclesProfiles[req.vehicleName] = req.changes;
+            vehiclesProfilesCache[req.vehicleName] = req.changes;
+            await putToStore('vehiclesProfiles', { vehicle: req.vehicleName, ...req.changes });
             req.status = 'approved';
-            saveAll();
-            addNotification(req.userId, 'Заявка одобрена', `Ваше предложение по изменению ТС "${req.vehicleName}" принято`);
+            await putToStore('editRequests', req);
+            await addNotification(req.userId, 'Заявка одобрена', `Ваше предложение по изменению ТС "${req.vehicleName}" принято`);
             showToast('Заявка одобрена');
             showAdminPanel();
         }
-    };
+    }
 
-    window.rejectEditRequest = function(requestId) {
-        let req = editRequests.find(r => r.id == requestId);
+    async function rejectEditRequest(requestId) {
+        let req = editRequestsCache.find(r => r.id == requestId);
         if(req) {
             req.status = 'rejected';
-            saveAll();
-            addNotification(req.userId, 'Заявка отклонена', `Ваше предложение по изменению ТС "${req.vehicleName}" отклонено`);
+            await putToStore('editRequests', req);
+            await addNotification(req.userId, 'Заявка отклонена', `Ваше предложение по изменению ТС "${req.vehicleName}" отклонено`);
             showToast('Заявка отклонена');
             showAdminPanel();
         }
-    };
+    }
 
     function adminModCard(p) {
-        return `<div class="photo-card"><img src="${p.thumb}"><div class="photo-info"><strong>${p.vehicle}</strong><div>${formatLoc(p.loc)}</div><div><i class="fas fa-user"></i> ${users.find(u=>u.id===p.userId)?.name}</div>
+        return `<div class="photo-card"><img src="${p.thumb}"><div class="photo-info"><strong>${p.vehicle}</strong><div>${formatLoc(p.loc)}</div><div><i class="fas fa-user"></i> ${usersCache.find(u=>u.id===p.userId)?.name}</div>
             <textarea id="modNote_${p.id}" placeholder="${T('moderationNote')} (для условного одобрения или отклонения)..." style="width:100%; margin:8px 0; padding:8px; border-radius:8px;"></textarea>
             <div style="display:flex; gap:8px; flex-wrap:wrap;"><button class="btn btn-success" onclick="moderatePhoto('${p.id}','approved', '')"><i class="fas fa-check"></i> ${T('acceptFull')}</button>
             <button class="btn btn-warning" onclick="moderatePhotoWithNote('${p.id}','conditional')"><i class="fas fa-question"></i> ${T('accept')} + ${T('addNote')}</button>
@@ -742,55 +941,62 @@
         moderatePhoto(id, status, note);
     };
 
-    window.moderatePhoto = function(id, status, note) {
-        let photo = allPhotos.find(p => p.id === id);
+    async function moderatePhoto(id, status, note) {
+        let photo = allPhotosCache.find(p => p.id === id);
         if(photo) {
             photo.status = status;
             photo.moderationNote = note || '';
+            await putToStore('photos', photo);
             if(status === 'rejected') {
                 let reason = note || 'Не указана';
-                addNotification(photo.userId, 'Фото отклонено', `Ваше фото "${photo.vehicle}" отклонено. Причина: ${reason}`);
+                await addNotification(photo.userId, 'Фото отклонено', `Ваше фото "${photo.vehicle}" отклонено. Причина: ${reason}`);
             } else if(status === 'approved') {
-                addNotification(photo.userId, 'Фото одобрено', `Ваше фото "${photo.vehicle}" прошло модерацию!`);
+                await addNotification(photo.userId, 'Фото одобрено', `Ваше фото "${photo.vehicle}" прошло модерацию!`);
             } else if(status === 'conditional') {
                 let msg = note ? `Ваше фото "${photo.vehicle}" принято условно. Замечание: ${note}` : `Ваше фото "${photo.vehicle}" принято условно.`;
-                addNotification(photo.userId, 'Фото принято условно', msg);
+                await addNotification(photo.userId, 'Фото принято условно', msg);
             }
-            saveAll();
             showToast(`Фото ${status === 'approved' ? 'одобрено' : (status === 'conditional' ? 'принято условно' : 'отклонено')}`);
             showAdminPanel();
             if(window.currentView === 'home') renderHome();
         }
-    };
+    }
 
-    window.changeUserRole = function(userId) {
-        let user = users.find(u => u.id === userId);
+    async function changeUserRole(userId) {
+        let user = usersCache.find(u => u.id === userId);
         if(user && user.id !== currentUser.id) {
             user.role = document.getElementById(`role_${userId}`).value;
-            saveAll();
+            await putToStore('users', user);
             showToast(`Роль пользователя ${user.name} изменена`);
             showAdminPanel();
         }
-    };
+    }
 
-    window.deleteUser = function(userId) {
+    async function deleteUser(userId) {
         if(userId === currentUser.id) { alert('Нельзя удалить себя'); return; }
         if(confirm(T('deleteUserConfirm'))) {
-            users = users.filter(u => u.id !== userId);
-            allPhotos = allPhotos.filter(p => p.userId !== userId);
-            votes = votes.filter(v => v.userId !== userId);
-            comments = comments.filter(c => c.userId !== userId);
-            photoViews = photoViews.filter(v => v.userId !== userId);
-            saveAll();
+            await deleteFromStore('users', userId);
+            usersCache = usersCache.filter(u => u.id !== userId);
+            
+            const userPhotos = allPhotosCache.filter(p => p.userId === userId);
+            for (const p of userPhotos) {
+                await deleteFromStore('photos', p.id);
+            }
+            allPhotosCache = allPhotosCache.filter(p => p.userId !== userId);
+            
+            votesCache = votesCache.filter(v => v.userId !== userId);
+            commentsCache = commentsCache.filter(c => c.userId !== userId);
+            photoViewsCache = photoViewsCache.filter(v => v.userId !== userId);
+            
             showToast('Пользователь удалён');
             if(window.currentView === 'profile' && window.currentProfileUser === userId) renderHome();
             showAdminPanel();
             renderHome();
         }
-    };
+    }
 
-    window.requestVehicleEdit = function(vehicleName) {
-        let profile = vehiclesProfiles[vehicleName] || {};
+    async function requestVehicleEdit(vehicleName) {
+        let profile = vehiclesProfilesCache[vehicleName] || {};
         let modal = document.createElement('div'); modal.className = 'edit-modal';
         let stateOptions = Object.keys(VEHICLE_STATES).map(s => `<option value="${s}" ${profile.state===s?'selected':''}>${getStateText(s)}</option>`).join('');
         modal.innerHTML = `<div><h3><i class="fas fa-edit"></i> ${T('editVehicle')}</h3>
@@ -803,11 +1009,11 @@
             <button class="btn btn-success" onclick="submitEditRequest('${escapeHtml(vehicleName)}')">${T('sendRequest')}</button>
             <button class="btn" onclick="this.closest('.edit-modal').remove()">${T('close')}</button></div>`;
         document.body.appendChild(modal);
-    };
+    }
 
-    window.submitEditRequest = function(vehicleName) {
+    async function submitEditRequest(vehicleName) {
         let request = {
-            id: Date.now(),
+            id: Date.now() + '_' + Math.random().toString(36).substr(2, 6),
             vehicleName: vehicleName,
             userId: currentUser.id,
             userName: currentUser.name,
@@ -822,18 +1028,19 @@
             status: 'pending',
             createdAt: Date.now()
         };
-        editRequests.push(request);
-        saveAll();
-        addNotification('admin1', 'Новая заявка на редактирование', `Пользователь ${currentUser.name} предлагает изменения для ТС "${vehicleName}"`);
+        await addToStore('editRequests', request);
+        editRequestsCache.push(request);
+        let admin = usersCache.find(u => u.role === 'admin');
+        if(admin) await addNotification(admin.id, 'Новая заявка на редактирование', `Пользователь ${currentUser.name} предлагает изменения для ТС "${vehicleName}"`);
         document.querySelector('.edit-modal')?.remove();
         showToast(T('requestSent'));
         showVehiclePage(vehicleName);
-    };
+    }
 
-    window.showVehiclePage = function(vehicleName) {
+    async function showVehiclePage(vehicleName) {
         window.currentView = 'vehicle';
-        let photos = allPhotos.filter(p => p.vehicle === vehicleName && (p.status === 'approved' || p.status === 'conditional'));
-        let profile = vehiclesProfiles[vehicleName] || { model: vehicleName, year: '—', engine: '—', state: 'unknown', purpose: '—' };
+        let photos = allPhotosCache.filter(p => p.vehicle === vehicleName && (p.status === 'approved' || p.status === 'conditional'));
+        let profile = vehiclesProfilesCache[vehicleName] || { model: vehicleName, year: '—', engine: '—', state: 'unknown', purpose: '—' };
         document.getElementById('mainContent').innerHTML = `<div class="section">
             <h2><i class="fas fa-truck"></i> ${vehicleName}</h2>
             <div class="vehicle-profile-card">
@@ -849,10 +1056,10 @@
             <h3><i class="fas fa-images"></i> Фотографии (${photos.length})</h3>
             <div class="photo-grid">${photos.map(p => photoCard(p, false)).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>'}</div>
         </div>`;
-    };
+    }
 
-    window.editVehicleProfile = function(vehicleName) {
-        let profile = vehiclesProfiles[vehicleName] || {};
+    async function editVehicleProfile(vehicleName) {
+        let profile = vehiclesProfilesCache[vehicleName] || {};
         let stateOptions = Object.keys(VEHICLE_STATES).map(s => `<option value="${s}" ${profile.state===s?'selected':''}>${getStateText(s)}</option>`).join('');
         let modal = document.createElement('div'); modal.className = 'edit-modal';
         modal.innerHTML = `<div><h3><i class="fas fa-edit"></i> ${T('editVehicle')}</h3>
@@ -864,31 +1071,41 @@
             <button class="btn btn-success" onclick="saveVehicleProfile('${escapeHtml(vehicleName)}')">${T('save')}</button>
             <button class="btn" onclick="this.closest('.edit-modal').remove()">${T('close')}</button></div>`;
         document.body.appendChild(modal);
-    };
+    }
 
-    window.saveVehicleProfile = function(vehicleName) {
+    async function saveVehicleProfile(vehicleName) {
         let newModel = document.getElementById('editModel').value;
         let profile = {
+            vehicle: newModel || vehicleName,
             model: newModel || vehicleName,
             year: document.getElementById('editYear').value,
             engine: document.getElementById('editEngine').value,
             state: document.getElementById('editState').value,
             purpose: document.getElementById('editPurpose').value
         };
-        vehiclesProfiles[vehicleName] = profile;
-        if(newModel && newModel !== vehicleName) {
-            delete vehiclesProfiles[vehicleName];
-            vehiclesProfiles[newModel] = profile;
-            allPhotos.forEach(p => { if(p.vehicle === vehicleName) p.vehicle = newModel; });
+        
+        if (newModel && newModel !== vehicleName) {
+            delete vehiclesProfilesCache[vehicleName];
+            await deleteFromStore('vehiclesProfiles', vehicleName);
+            vehiclesProfilesCache[newModel] = profile;
+            await addToStore('vehiclesProfiles', profile);
+            for (let p of allPhotosCache) {
+                if (p.vehicle === vehicleName) {
+                    p.vehicle = newModel;
+                    await putToStore('photos', p);
+                }
+            }
+        } else {
+            vehiclesProfilesCache[vehicleName] = profile;
+            await putToStore('vehiclesProfiles', profile);
         }
-        saveAll();
         document.querySelector('.edit-modal')?.remove();
         showToast('Профиль ТС обновлён');
         showVehiclePage(newModel || vehicleName);
         renderHome();
-    };
+    }
 
-    window.showUploadForm = function() {
+    function showUploadForm() {
         window.currentView = 'upload';
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-cloud-upload-alt"></i> ${T('upload')}</h2>
             <div class="form-group"><label><i class="fas fa-image"></i> ${T('file')}</label><input type="file" id="uploadFile" accept="image/jpeg,image/png,image/webp,image/gif"></div>
@@ -905,9 +1122,9 @@
             document.getElementById('uploadLat').value = lat.toFixed(6);
             document.getElementById('uploadLng').value = lng.toFixed(6);
         });
-    };
+    }
 
-    window.doUpload = function() {
+    async function doUpload() {
         const fileInput = document.getElementById('uploadFile');
         const file = fileInput.files[0];
         
@@ -930,10 +1147,10 @@
         
         const reader = new FileReader();
         
-        reader.onload = function(e) {
+        reader.onload = async function(e) {
             try {
                 const img = new Image();
-                img.onload = function() {
+                img.onload = async function() {
                     const newPhoto = {
                         id: Date.now() + '_' + Math.random().toString(36).substr(2, 9),
                         userId: currentUser.id,
@@ -956,32 +1173,29 @@
                         moderationNote: ''
                     };
                     
-                    allPhotos.push(newPhoto);
+                    await addToStore('photos', newPhoto);
+                    allPhotosCache.push(newPhoto);
                     
-                    if(!vehiclesProfiles[vehicle]) {
-                        vehiclesProfiles[vehicle] = {
-                            model: vehicle,
-                            year: '—',
-                            engine: '—',
-                            state: 'unknown',
-                            purpose: '—'
-                        };
+                    if(!vehiclesProfilesCache[vehicle]) {
+                        const newProfile = { vehicle: vehicle, model: vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
+                        vehiclesProfilesCache[vehicle] = newProfile;
+                        await addToStore('vehiclesProfiles', newProfile);
                     }
                     
-                    saveAll();
-                    addNotification('admin1', 'Новое фото', `Пользователь ${currentUser.name} загрузил фото: ${vehicle}`);
+                    let admin = usersCache.find(u => u.role === 'admin');
+                    if(admin) await addNotification(admin.id, 'Новое фото', `Пользователь ${currentUser.name} загрузил фото: ${vehicle}`);
                     
                     submitBtn.disabled = false;
                     progressDiv.style.display = 'none';
                     
-                    // ОЧИЩАЕМ ФОРМУ ДЛЯ СЛЕДУЮЩЕЙ ЗАГРУЗКИ
+                    // Очищаем форму
                     document.getElementById('uploadFile').value = '';
                     document.getElementById('uploadVehicle').value = '';
                     document.getElementById('uploadCountry').value = '';
                     document.getElementById('uploadCity').value = '';
                     document.getElementById('uploadStreet').value = '';
                     
-                    alert(T('uploadSuccess'));
+                    showToast(T('uploadSuccess'));
                     renderHome();
                 };
                 
@@ -1006,23 +1220,29 @@
         };
         
         reader.readAsDataURL(file);
-    };
+    }
 
     function showProfile() { showUserProfile(currentUser.id); }
-    function showNotifications() { 
-        let myNotifs = notifications.filter(n=>n.userId===currentUser.id).reverse(); 
-        myNotifs.forEach(n=>n.read=true); 
-        localStorage.setItem('mss_notifications', JSON.stringify(notifications)); 
+    
+    async function showNotifications() { 
+        let myNotifs = notificationsCache.filter(n => n.userId === currentUser.id).reverse(); 
+        for (let n of myNotifs) {
+            if (!n.read) {
+                n.read = true;
+                await putToStore('notifications', n);
+            }
+        }
+        notificationsCache = notificationsCache.map(n => n.userId === currentUser.id ? { ...n, read: true } : n);
         updateNotifBadge(); 
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-bell"></i> ${T('notifications')}</h2>${myNotifs.map(n=>`<div class="user-card"><strong>${n.title}</strong><br>${n.message}<br><small>${new Date(n.createdAt).toLocaleString()}</small></div>`).join('')||'<p>Нет уведомлений</p>'}</div>`; 
     }
     
     function showStatistics() { 
-        let approved = allPhotos.filter(p=>p.status==='approved');
+        let approved = allPhotosCache.filter(p=>p.status==='approved');
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-chart-pie"></i> ${T('statistics')}</h2>
             <div class="admin-stats">
                 <div class="stat-card"><div class="stat-number">${approved.length}</div><div>${T('approved')}</div></div>
-                <div class="stat-card"><div class="stat-number">${allPhotos.filter(p=>p.status==='pending').length}</div><div>${T('pending')}</div></div>
+                <div class="stat-card"><div class="stat-number">${allPhotosCache.filter(p=>p.status==='pending').length}</div><div>${T('pending')}</div></div>
                 <div class="stat-card"><div class="stat-number">${approved.reduce((s,p)=>s+(p.likes||0),0)}</div><div>Всего лайков</div></div>
                 <div class="stat-card"><div class="stat-number">${approved.reduce((s,p)=>s+(p.views||0),0)}</div><div>Всего просмотров</div></div>
             </div>
@@ -1030,18 +1250,19 @@
     }
     
     function showContest() { 
-        let top = [...allPhotos.filter(p=>p.status==='approved')].sort((a,b)=>b.rating-a.rating).slice(0,6); 
+        let top = [...allPhotosCache.filter(p=>p.status==='approved')].sort((a,b)=>b.rating-a.rating).slice(0,6); 
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-trophy"></i> ${T('contest')}</h2><div class="photo-grid">${top.map(p=>photoCard(p, false)).join('')}</div></div>`; 
     }
     
     function showMyPhotos() { 
-        let my = allPhotos.filter(p=>p.userId===currentUser.id); 
+        let my = allPhotosCache.filter(p=>p.userId===currentUser.id); 
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-images"></i> ${T('myPhotos')}</h2><div class="photo-grid">${my.map(p=>photoCard(p, false)).join('')||'<div style="text-align:center; padding:40px;">Нет фото</div>'}</div></div>`; 
     }
     
     function showSwitchUserPanel() {
-        let admin = users.find(u => u.role === 'admin');
-        let demo = users.find(u => u.role === 'user');
+        let admin = usersCache.find(u => u.role === 'admin');
+        let demo = usersCache.find(u => u.role === 'user' && u.email === 'demo@mail.ru');
+        let otherUsers = usersCache.filter(u => u.role !== 'admin' && u.id !== demo?.id);
         document.getElementById('mainContent').innerHTML = `<div class="section">
             <h2><i class="fas fa-exchange-alt"></i> ${T('switchUser')}</h2>
             <div class="switch-user-panel">
@@ -1052,6 +1273,9 @@
                     <div class="user-option ${currentUser?.id === demo?.id ? 'active' : ''}" onclick="switchToUser('${demo?.id}')">
                         <i class="fas fa-user"></i> ${T('demoAccount')} (demo@mail.ru)
                     </div>
+                    ${otherUsers.map(u => `<div class="user-option ${currentUser?.id === u.id ? 'active' : ''}" onclick="switchToUser('${u.id}')">
+                        <i class="fas fa-user-plus"></i> ${u.name} (${u.email})
+                    </div>`).join('')}
                 </div>
             </div>
             <div style="margin-top:20px; text-align:center;">
@@ -1060,8 +1284,8 @@
         </div>`;
     }
     
-    window.switchToUser = function(userId) {
-        let user = users.find(u => u.id === userId);
+    async function switchToUser(userId) {
+        let user = usersCache.find(u => u.id === userId);
         if(user) {
             currentUser = JSON.parse(JSON.stringify(user));
             delete currentUser.password;
@@ -1069,13 +1293,13 @@
             showToast(`Переключено на ${user.name}`);
             renderMainApp();
         }
-    };
+    }
     
-    // ========== ГЛАВНАЯ С КОЛОНКАМИ ==========
+    // ========== ГЛАВНАЯ ==========
     function renderHome() { 
         window.currentView = 'home'; 
         currentPage = 1;
-        let visible = allPhotos.filter(p => p.status === 'approved' || p.status === 'conditional');
+        let visible = allPhotosCache.filter(p => p.status === 'approved' || p.status === 'conditional');
         let countries = [...new Set(visible.map(p => p.loc?.country).filter(Boolean))];
         let topPhotos = [...visible].sort((a,b)=>b.rating-a.rating).slice(0,3);
         let randomPhotos = [...visible].sort(()=>0.5-Math.random()).slice(0,3);
@@ -1106,10 +1330,10 @@
         filterGallery();
     }
     
-    window.filterGallery = function() {
+    function filterGallery() {
         let searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
         let statusFilter = document.getElementById('statusFilter')?.value || 'all';
-        let visible = allPhotos.filter(p => (p.status === 'approved' || p.status === 'conditional') && (statusFilter === 'all' || p.status === statusFilter));
+        let visible = allPhotosCache.filter(p => (p.status === 'approved' || p.status === 'conditional') && (statusFilter === 'all' || p.status === statusFilter));
         if(searchTerm) {
             visible = visible.filter(p => p.vehicle.toLowerCase().includes(searchTerm) || (p.loc.country || '').toLowerCase().includes(searchTerm) || (p.loc.city || '').toLowerCase().includes(searchTerm));
         }
@@ -1128,14 +1352,14 @@
         if(grid) grid.innerHTML = paginated.map(p => photoCard(p, false)).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>';
         let pagContainer = document.getElementById('galleryPagination');
         if(pagContainer) pagContainer.innerHTML = paginationHtml;
-    };
+    }
     
-    window.goToPage = function(page) { currentPage = page; filterGallery(); };
+    function goToPage(page) { currentPage = page; filterGallery(); }
     
-    window.showCountryPhotos = function(country) {
+    function showCountryPhotos(country) {
         window.currentView = 'country';
         window.currentCountry = country;
-        let photos = allPhotos.filter(p => (p.status === 'approved' || p.status === 'conditional') && p.loc?.country === country);
+        let photos = allPhotosCache.filter(p => (p.status === 'approved' || p.status === 'conditional') && p.loc?.country === country);
         let cities = [...new Set(photos.map(p => p.loc?.city).filter(Boolean))];
         function renderCity(city) {
             let filtered = city ? photos.filter(p => p.loc?.city === city) : photos;
@@ -1146,14 +1370,14 @@
         window.renderCity = renderCity;
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2>${getFlag(country)} ${country}</h2><button class="btn" onclick="renderHome()"><i class="fas fa-arrow-left"></i> ${T('back')}</button><div id="countryContent"></div></div>`;
         renderCity(null);
-    };
+    }
     
     // ========== FULLSCREEN ==========
-    window.openFullscreen = function(id) { 
-        recordView(id);
-        let photo = allPhotos.find(p=>p.id===id); 
+    async function openFullscreen(id) { 
+        await recordView(id);
+        let photo = allPhotosCache.find(p=>p.id===id); 
         if(!photo) return; 
-        let commentsList = comments.filter(c=>c.photoId===id); 
+        let commentsList = commentsCache.filter(c=>c.photoId===id); 
         let userVote = getUserVote(id);
         let canVote = currentUser && canUserVote(currentUser);
         let canComment = currentUser && canUserComment(currentUser);
@@ -1169,57 +1393,62 @@
                 <div class="photo-stats" style="margin:10px 0;"><span><i class="fas fa-eye"></i> ${photo.views || 0} ${T('views')}</span><span><i class="fas fa-comment"></i> ${commentsList.length}</span></div>
                 ${modNoteHtml}
                 <div style="margin-top:10px;">${currentUser ? (photo.userId !== currentUser.id ? (canVote ? `<button onclick="fullscreenVote('${id}', 1)" style="margin-right:10px;" class="vote-btn vote-up ${userVote === 1 ? 'vote-active-up' : ''}">+ ${photo.likes || 0}</button><button onclick="fullscreenVote('${id}', -1)" class="vote-btn vote-down ${userVote === -1 ? 'vote-active-down' : ''}">- ${photo.dislikes || 0}</button>` : `<span class="vote-btn vote-disabled">+ ${photo.likes || 0} / - ${photo.dislikes || 0}</span><small> (${T('voteRestricted')})</small>`) : `<span>Нельзя голосовать за своё фото</span>`) : `<a href="#" onclick="showAuth();return false;">${T('loginRequired')}</a>`}</div>
-                <div><h4><i class="fas fa-comments"></i> ${T('comments')}</h4>${commentsList.map(c=>`<div class="comment"><div class="comment-text"><strong><i class="fas fa-user"></i> <span onclick="closeFullscreen(); showUserProfile('${c.userId}')" style="cursor:pointer; color:#4a9eff;">${users.find(u=>u.id===c.userId)?.name}</span></strong><br>${c.text}</div><div class="comment-actions">${(currentUser?.role === 'admin' || currentUser?.id === c.userId) ? `<button class="btn btn-danger" onclick="deleteComment('${c.id}', '${id}')" style="padding:4px 8px;"><i class="fas fa-trash"></i> ${T('delete')}</button>` : ''}</div></div>`).join('')}<div class="comment-form">${currentUser ? (canComment ? `<input id="newComm" placeholder="${T('writeComment')}" style="flex:1; padding:10px; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px; color:white;"><button class="btn btn-success" onclick="addComment('${id}')"><i class="fas fa-paper-plane"></i> ${T('send')}</button>` : `<span style="color:#e74c3c;">${T('commentRestricted')}</span>`) : ''}</div></div>
+                <div><h4><i class="fas fa-comments"></i> ${T('comments')}</h4>${commentsList.map(c=>`<div class="comment"><div class="comment-text"><strong><i class="fas fa-user"></i> <span onclick="closeFullscreen(); showUserProfile('${c.userId}')" style="cursor:pointer; color:#4a9eff;">${usersCache.find(u=>u.id===c.userId)?.name}</span></strong><br>${c.text}</div><div class="comment-actions">${(currentUser?.role === 'admin' || currentUser?.id === c.userId) ? `<button class="btn btn-danger" onclick="deleteComment('${c.id}', '${id}')" style="padding:4px 8px;"><i class="fas fa-trash"></i> ${T('delete')}</button>` : ''}</div></div>`).join('')}<div class="comment-form">${currentUser ? (canComment ? `<input id="newComm" placeholder="${T('writeComment')}" style="flex:1; padding:10px; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px; color:white;"><button class="btn btn-success" onclick="addComment('${id}')"><i class="fas fa-paper-plane"></i> ${T('send')}</button>` : `<span style="color:#e74c3c;">${T('commentRestricted')}</span>`) : ''}</div></div>
             </div>`; 
         viewer.classList.add('active'); 
-    };
+    }
     
-    window.deleteComment = function(commentId, photoId) {
-        comments = comments.filter(c => c.id != commentId);
-        saveAll();
+    async function deleteComment(commentId, photoId) {
+        await deleteFromStore('comments', commentId);
+        commentsCache = commentsCache.filter(c => c.id != commentId);
         openFullscreen(photoId);
         showToast('Комментарий удалён');
-    };
+    }
     
-    window.fullscreenVote = function(id, val) {
+    async function fullscreenVote(id, val) {
         if(!currentUser) return;
         if(!canUserVote(currentUser)) { alert(T('voteRestricted')); return; }
-        let photo = allPhotos.find(p => p.id === id);
+        let photo = allPhotosCache.find(p => p.id === id);
         if(photo.userId === currentUser.id) { alert('Нельзя голосовать за своё фото'); return; }
-        let existing = votes.find(v => v.photoId === id && v.userId === currentUser.id);
+        let existing = votesCache.find(v => v.photoId === id && v.userId === currentUser.id);
         if(existing) {
             if(existing.value === val) return;
             if(val === 1) { photo.likes = (photo.likes || 0) + 1; photo.dislikes = (photo.dislikes || 0) - (existing.value === -1 ? 1 : 0); }
             else if(val === -1) { photo.dislikes = (photo.dislikes || 0) + 1; photo.likes = (photo.likes || 0) - (existing.value === 1 ? 1 : 0); }
             photo.rating += (val - existing.value);
             existing.value = val;
+            await putToStore('votes', existing);
+            await putToStore('photos', photo);
         } else {
             if(val === 1) photo.likes = (photo.likes || 0) + 1;
             else photo.dislikes = (photo.dislikes || 0) + 1;
             photo.rating += val;
-            votes.push({ photoId: id, userId: currentUser.id, value: val });
+            const newVote = { id: Date.now() + '_' + Math.random().toString(36).substr(2, 6), photoId: id, userId: currentUser.id, value: val };
+            await addToStore('votes', newVote);
+            votesCache.push(newVote);
+            await putToStore('photos', photo);
         }
-        saveAll();
         openFullscreen(id);
         if(window.currentView === 'home') filterGallery();
         else if(window.currentView === 'country') showCountryPhotos(window.currentCountry);
         else if(window.currentView === 'vehicle') showVehiclePage(photo.vehicle);
         else if(window.currentView === 'profile' && window.currentProfileUser) showUserProfile(window.currentProfileUser);
-    };
+    }
     
-    window.addComment = function(id) { 
+    async function addComment(id) { 
         if(!canUserComment(currentUser)) { alert(T('commentRestricted')); return; }
         let t = document.getElementById('newComm')?.value; 
         if(t && t.trim()) { 
-            comments.push({ id: Date.now()+'', photoId: id, userId: currentUser.id, text: t.trim(), createdAt: Date.now() }); 
-            saveAll(); 
+            const newComment = { id: Date.now()+'', photoId: id, userId: currentUser.id, text: t.trim(), createdAt: Date.now() };
+            await addToStore('comments', newComment);
+            commentsCache.push(newComment);
             openFullscreen(id); 
         } 
-    };
+    }
     
-    window.closeFullscreen = function() { document.getElementById('fullscreenViewer').classList.remove('active'); };
+    function closeFullscreen() { document.getElementById('fullscreenViewer').classList.remove('active'); }
 
-    // ========== АВТОРИЗАЦИЯ (оставлена для регистрации) ==========
+    // ========== АВТОРИЗАЦИЯ ==========
     function showAuth() { 
         document.getElementById('app').innerHTML = `<div style="max-width:450px; margin:80px auto; background:#0f141c; padding:35px; border-radius:24px; border:1px solid #2a3a4a; text-align:center;">
             <h2><i class="fas fa-camera-retro"></i> ${T('siteName')}</h2>
@@ -1235,10 +1464,10 @@
         </div>`; 
     }
     
-    window.doLogin = function() { 
+    async function doLogin() { 
         const email = document.getElementById('loginEmail').value;
         const password = document.getElementById('loginPassword').value;
-        const user = users.find(u => u.email === email && u.password === password);
+        const user = usersCache.find(u => u.email === email && u.password === password);
         
         if(user) { 
             currentUser = JSON.parse(JSON.stringify(user)); 
@@ -1248,9 +1477,9 @@
         } else {
             alert('Неверный email или пароль.\n\nАдминистратор: admin@multispotting.com / admin123\nДемо: demo@mail.ru / demo123');
         }
-    };
+    }
     
-    window.showRegisterForm = function() { 
+    function showRegisterForm() { 
         document.getElementById('app').innerHTML = `<div style="max-width:450px; margin:80px auto; background:#0f141c; padding:35px; border-radius:24px; border:1px solid #2a3a4a;">
             <h2 style="text-align:center;">${T('register')}</h2>
             <input id="regName" placeholder="${T('name')}" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;">
@@ -1259,24 +1488,36 @@
             <button class="btn btn-success" onclick="doRegister()" style="width:100%; padding:12px; margin-top:10px;">${T('register')}</button>
             <div style="margin-top:20px; text-align:center; cursor:pointer; color:#4a9eff;" onclick="showAuth()"><i class="fas fa-arrow-left"></i> ${T('login')}</div>
         </div>`; 
-    };
+    }
     
-    window.doRegister = function() { 
+    async function doRegister() { 
         let n = document.getElementById('regName').value, e = document.getElementById('regEmail').value, p = document.getElementById('regPassword').value; 
         if(!n||!e||p.length<4) { alert('Заполните все поля (пароль минимум 4 символа)'); return; } 
-        if(users.find(u=>u.email===e)) { alert('Email уже используется'); return; } 
-        let newUser = { id: Date.now()+'', name: n, email: e, password: p, role: 'user', bio: '', city: '', website: '', telegram: '', banVote: false, banComment: false }; 
-        users.push(newUser); 
-        saveAll(); 
-        alert('Регистрация успешна! Войдите.'); 
+        if(usersCache.find(u=>u.email===e)) { alert('Email уже используется'); return; } 
+        let newUser = { 
+            id: 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+            name: n, 
+            email: e, 
+            password: p, 
+            role: 'user', 
+            bio: '', 
+            city: '', 
+            website: '', 
+            telegram: '', 
+            banVote: false, 
+            banComment: false,
+            createdAt: Date.now()
+        }; 
+        await addToStore('users', newUser);
+        usersCache.push(newUser);
+        alert('Регистрация успешна! Теперь вы можете войти.'); 
         showAuth(); 
-    };
+    }
     
-    window.logout = function() { 
+    async function logout() { 
         localStorage.removeItem('mss_session'); 
         currentUser = null; 
-        // Автоматически входим как админ при "выходе"
-        let admin = users.find(u => u.role === 'admin');
+        let admin = usersCache.find(u => u.role === 'admin');
         if(admin) {
             currentUser = JSON.parse(JSON.stringify(admin));
             delete currentUser.password;
@@ -1285,12 +1526,11 @@
         } else {
             showAuth();
         }
-    };
+    }
 
-    function renderMainApp() { 
+    async function renderMainApp() { 
         if(!currentUser) { 
-            // Если нет пользователя, входим как админ
-            let admin = users.find(u => u.role === 'admin');
+            let admin = usersCache.find(u => u.role === 'admin');
             if(admin) {
                 currentUser = JSON.parse(JSON.stringify(admin));
                 delete currentUser.password;
@@ -1326,8 +1566,12 @@
         renderHome(); 
     }
 
-    initData();
-    renderMainApp();
+    // Запуск приложения
+    (async function() {
+        document.getElementById('app').innerHTML = `<div class="loading-overlay"><div class="loading-spinner"></div><div>${T('loading')}</div></div>`;
+        await initData();
+        await renderMainApp();
+    })();
 </script>
 </body>
 </html>
