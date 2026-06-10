@@ -974,6 +974,13 @@
                     submitBtn.disabled = false;
                     progressDiv.style.display = 'none';
                     
+                    // ОЧИЩАЕМ ФОРМУ ДЛЯ СЛЕДУЮЩЕЙ ЗАГРУЗКИ
+                    document.getElementById('uploadFile').value = '';
+                    document.getElementById('uploadVehicle').value = '';
+                    document.getElementById('uploadCountry').value = '';
+                    document.getElementById('uploadCity').value = '';
+                    document.getElementById('uploadStreet').value = '';
+                    
                     alert(T('uploadSuccess'));
                     renderHome();
                 };
