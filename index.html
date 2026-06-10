@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>Multi Spotting Site — транспортная галерея</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flag-icons@7.2.3/css/flag-icons.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, -apple-system, 'Roboto', sans-serif; background: #0a0e17; color: #e8edf5; line-height: 1.5; }
+        .header { background: #070b12; border-bottom: 1px solid #2a3a4a; padding: 0.8rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; position: sticky; top: 0; z-index: 100; backdrop-filter: blur(10px); }
+        .logo-area { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+        .logo { font-size: 1.5rem; }
+        .site-title { font-size: 1rem; font-weight: 700; background: linear-gradient(135deg, #fff, #4a9eff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .lang-switch { display: flex; gap: 5px; }
+        .lang-btn { background: none; border: 1px solid #2a3a4a; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 0.7rem; transition: 0.2s; color: #4a9eff; }
+        .lang-btn.active { background: #4a9eff; color: #0e1219; border-color: #4a9eff; }
+        .menu-btn { background: none; border: 1px solid #2a3a4a; font-size: 1.2rem; cursor: pointer; color: #4a9eff; padding: 6px 12px; border-radius: 6px; position: relative; }
+        .notif-badge { position: absolute; top: -5px; right: -5px; background: #e74c3c; color: white; border-radius: 50%; padding: 2px 6px; font-size: 0.6rem; font-weight: bold; min-width: 18px; text-align: center; }
+        .user-info { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .admin-badge { background: #e74c3c; padding: 2px 8px; border-radius: 20px; font-size: 0.65rem; font-weight: bold; }
+        .banned-badge { background: #7f8c8d; padding: 2px 8px; border-radius: 20px; font-size: 0.65rem; font-weight: bold; }
+        .side-menu { position: fixed; top: 0; right: -100%; width: 85%; max-width: 320px; height: 100%; background: #0a0e17; border-left: 1px solid #2a3a4a; transition: 0.3s ease; z-index: 200; padding: 20px; overflow-y: auto; }
+        .side-menu.open { right: 0; }
+        .menu-header { display: flex; justify-content: space-between; margin-bottom: 25px; font-size: 1.1rem; font-weight: bold; color: #4a9eff; border-bottom: 1px solid #2a3a4a; padding-bottom: 10px; }
+        .menu-list { list-style: none; }
+        .menu-list li { padding: 12px 0; border-bottom: 1px solid #1a2332; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 12px; }
+        .menu-list li i { width: 24px; color: #4a9eff; }
+        .menu-list li:hover { color: #4a9eff; padding-left: 10px; background: rgba(74,158,255,0.1); }
+        .container { max-width: 1600px; margin: 16px auto; padding: 0 12px; }
+        .section { background: #0f141c; border-radius: 20px; padding: 20px 16px; margin-bottom: 24px; border: 1px solid #2a3a4a; }
+        h2, h3 { margin-bottom: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; border-left: 3px solid #4a9eff; padding-left: 12px; font-size: 1.3rem; }
+        .horizontal-scroll { overflow-x: auto; white-space: nowrap; padding-bottom: 12px; scrollbar-width: thin; }
+        .horizontal-scroll .thumb-strip { display: inline-flex; gap: 12px; }
+        .strip-card { display: inline-block; width: 140px; background: #0a0e17; border-radius: 12px; overflow: hidden; border: 1px solid #2a3a4a; cursor: pointer; transition: 0.3s; }
+        .strip-card img { width: 100%; height: 90px; object-fit: cover; }
+        .strip-card span { display: block; padding: 6px; font-size: 0.7rem; text-align: center; }
+        .strip-card:hover { transform: translateY(-3px); border-color: #4a9eff; }
+        .main-two-columns { display: flex; flex-wrap: wrap; gap: 24px; }
+        .main-center { flex: 2; min-width: 250px; }
+        .main-sidebar { flex: 1; min-width: 240px; display: flex; flex-direction: column; gap: 24px; }
+        .side-block { background: #0a0e17; border-radius: 16px; padding: 16px; border: 1px solid #2a3a4a; }
+        .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .photo-card { background: #0a0e17; border-radius: 16px; overflow: hidden; border: 1px solid #2a3a4a; transition: 0.3s; cursor: pointer; position: relative; }
+        .photo-card:hover { transform: translateY(-3px); border-color: #4a9eff; }
+        .photo-card img { width: 100%; height: 200px; object-fit: cover; }
+        .photo-info { padding: 14px; }
+        .vehicle-name { font-weight: 700; font-size: 1rem; cursor: pointer; color: #4a9eff; }
+        .status-badge { position: absolute; top: 10px; right: 10px; padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; background: rgba(0,0,0,0.85); backdrop-filter: blur(4px); z-index: 1; }
+        .badge-approved { background: #2ecc71; color: #000; }
+        .badge-conditional { background: #3498db; color: #fff; }
+        .badge-pending { background: #e67e22; color: #fff; }
+        .badge-rejected { background: #e74c3c; color: #fff; }
+        .photo-actions { position: absolute; bottom: 10px; right: 10px; display: flex; gap: 5px; z-index: 2; }
+        .photo-actions button { padding: 4px 8px; font-size: 0.7rem; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); border-radius: 6px; cursor: pointer; border: none; }
+        .photo-stats { display: flex; gap: 15px; margin-top: 8px; font-size: 0.8rem; color: #8a9bb0; }
+        .vote-buttons { display: flex; gap: 15px; margin-top: 8px; }
+        .vote-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: 4px 12px; border-radius: 20px; transition: 0.2s; }
+        .vote-up { color: #2ecc71; background: rgba(46,204,113,0.1); }
+        .vote-up:hover { background: rgba(46,204,113,0.3); transform: scale(1.05); }
+        .vote-down { color: #e74c3c; background: rgba(231,76,60,0.1); }
+        .vote-down:hover { background: rgba(231,76,60,0.3); transform: scale(1.05); }
+        .vote-active-up { background: #2ecc71; color: #000; }
+        .vote-active-down { background: #e74c3c; color: #fff; }
+        .vote-disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+        .form-group { margin-bottom: 18px; }
+        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 12px; background: #0a0e17; border: 1px solid #2a3a4a; border-radius: 10px; color: #e8edf5; }
+        .search-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+        .filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #2a3a4a; }
+        .filter-chip { display: inline-flex; align-items: center; gap: 8px; background: #0a0e17; padding: 6px 14px; border-radius: 30px; border: 1px solid #3a4a5a; cursor: pointer; margin: 4px; font-size: 0.75rem; transition: 0.2s; }
+        .filter-chip.active, .filter-chip:hover { background: #4a9eff; color: #000; border-color: #4a9eff; }
+        .map-wrapper { position: relative; margin-top: 10px; }
+        .map-container { height: 250px; border-radius: 12px; border: 1px solid #2a3a4a; overflow: hidden; transition: height 0.3s ease; }
+        .map-container.collapsed { height: 50px; }
+        .map-collapse-btn { position: absolute; top: 10px; right: 10px; z-index: 1000; background: #1e2a3a; border: none; border-radius: 6px; padding: 4px 10px; font-size: 0.7rem; cursor: pointer; color: #4a9eff; }
+        .coord-input { display: flex; gap: 10px; margin-top: 10px; }
+        button { background: #1e2a3a; color: #4a9eff; border: 1px solid #2a3a4a; padding: 8px 16px; border-radius: 8px; cursor: pointer; transition: 0.2s; font-size: 0.85rem; }
+        button:hover { background: #2a3a4a; transform: translateY(-1px); }
+        button.danger { background: #2a1a1a; border-color: #e74c3c; color: #e74c3c; }
+        button.danger:hover { background: #e74c3c; color: #fff; }
+        button.success { background: #1a3a2a; border-color: #2ecc71; color: #2ecc71; }
+        .fullscreen-viewer { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 3000; overflow-y: auto; }
+        .fullscreen-viewer.active { display: flex; flex-direction: column; }
+        .fullscreen-close { position: fixed; top: 15px; right: 20px; font-size: 1.8rem; cursor: pointer; background: rgba(0,0,0,0.6); border: none; width: 44px; height: 44px; border-radius: 50%; z-index: 3001; color: white; }
+        .fullscreen-image { flex: 1; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .fullscreen-image img { max-width: 100%; max-height: 60vh; object-fit: contain; border-radius: 8px; }
+        .fullscreen-info { background: rgba(0,0,0,0.95); padding: 16px 20px; border-top: 1px solid #4a9eff; }
+        .comment { background: #0a0e17; padding: 12px; border-radius: 10px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+        .comment-text { flex: 1; }
+        .comment-actions { display: flex; gap: 8px; }
+        .comment-form { display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
+        .edit-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 5000; display: flex; align-items: center; justify-content: center; }
+        .edit-modal > div { background: #0f141c; padding: 24px; border-radius: 20px; width: 90%; max-width: 500px; border: 1px solid #4a9eff; max-height: 90vh; overflow-y: auto; }
+        .admin-stats { display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap; }
+        .stat-card { background: #0a0e17; padding: 15px 25px; border-radius: 16px; border: 1px solid #4a9eff; text-align: center; }
+        .stat-number { font-size: 2rem; font-weight: bold; color: #4a9eff; }
+        .user-card { background: #0a0e17; padding: 12px; border-radius: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; border: 1px solid #2a3a4a; }
+        .profile-header { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+        .profile-avatar { font-size: 4rem; color: #4a9eff; }
+        .profile-info h3 { margin-bottom: 5px; }
+        .profile-bio { background: #0a0e17; padding: 15px; border-radius: 12px; margin: 15px 0; border-left: 3px solid #4a9eff; }
+        .journal-list { display: flex; flex-direction: column; gap: 16px; }
+        .journal-item { display: flex; background: #0a0e17; border-radius: 16px; overflow: hidden; border: 1px solid #2a3a4a; transition: 0.2s; cursor: pointer; }
+        .journal-item:hover { transform: translateX(5px); border-color: #4a9eff; }
+        .journal-status-bar { width: 6px; height: auto; }
+        .journal-status-bar.approved { background: #2ecc71; }
+        .journal-status-bar.conditional { background: #3498db; }
+        .journal-status-bar.pending { background: #e67e22; }
+        .journal-status-bar.rejected { background: #e74c3c; }
+        .journal-content { flex: 1; display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; align-items: center; }
+        .journal-img { width: 100px; height: 100px; object-fit: cover; border-radius: 12px; cursor: pointer; }
+        .journal-details { flex: 2; min-width: 180px; }
+        .journal-details h4 { color: #4a9eff; margin-bottom: 8px; }
+        .journal-stats { display: flex; gap: 20px; margin-top: 10px; font-size: 0.8rem; color: #8a9bb0; }
+        .pagination { display: flex; justify-content: center; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+        .page-btn { padding: 6px 12px; background: #0a0e17; border: 1px solid #2a3a4a; border-radius: 6px; cursor: pointer; }
+        .page-btn.active { background: #4a9eff; color: #000; }
+        .toast { position: fixed; bottom: 20px; left: 20px; background: #2ecc71; color: #000; padding: 12px 20px; border-radius: 30px; z-index: 9999; animation: fadeOut 3s forwards; }
+        @keyframes fadeOut { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+        @media (max-width: 768px) { .photo-grid { grid-template-columns: 1fr; } .main-two-columns { flex-direction: column; } .journal-content { flex-direction: column; text-align: center; } }
+    </style>
+</head>
+<body>
+<div id="app">Загрузка...</div>
+
+<script>
+    // ========== ЛОКАЛИЗАЦИЯ ==========
+    const LOC = {
+        ru: {
+            siteName: 'Multi Spotting Site', profile: 'Профиль', statistics: 'Статистика', upload: 'Загрузка', 
+            journal: 'Журнал', contest: 'Конкурс', adminPanel: 'Админ-панель', logout: 'Выход', 
+            login: 'Войти', register: 'Регистрация', email: 'Email', password: 'Пароль', name: 'Имя',
+            file: 'Файл', vehicle: 'Транспорт', country: 'Страна', city: 'Город', street: 'Улица',
+            send: 'Отправить', approved: 'Одобрено', conditional: 'Условно', pending: 'Модерация', rejected: 'Отклонено',
+            editPhoto: 'Редактировать', delete: 'Удалить', save: 'Сохранить', close: 'Закрыть',
+            acceptFull: 'Одобрить', accept: 'Условно', reject: 'Отклонить', model: 'Модель', purpose: 'Назначение',
+            currentState: 'Состояние', stateOper: 'Эксплуатируется', stateRepair: 'На ремонте', stateStorage: 'На хранении',
+            stateScrap: 'Списан', stateUnknown: 'Неизвестно', confirmDeletePhoto: 'Удалить это фото?',
+            latitude: 'Широта', longitude: 'Долгота', collapseMap: 'Свернуть карту', expandMap: 'Развернуть карту',
+            comments: 'Комментарии', writeComment: 'Написать комментарий...', loginRequired: 'Войдите чтобы оценить',
+            myPhotos: 'Мои фото', notifications: 'Уведомления', year: 'Год выпуска', engine: 'Двигатель',
+            users: 'Пользователей', totalPhotos: 'Всего фото', onModeration: 'На модерации',
+            deleteUserConfirm: 'Удалить пользователя и все его фото?', editVehicle: 'Предложить изменение ТС',
+            lastPhotos: 'Последние фото', countries: 'Страны', back: 'Назад', search: 'Поиск', searchPlaceholder: 'Название ТС, страна или город...',
+            views: 'просмотров', allCities: 'Все города', actions: 'Действия', rating: 'Рейтинг',
+            noPhotos: 'Нет фотографий', uploadSuccess: 'Фото отправлено на модерацию', allStatuses: 'Все статусы',
+            moderation: 'Модерация', allPhotosAdmin: 'Все фото', usersManagement: 'Управление пользователями',
+            spottingStrip: 'Лента споттинга', editRequests: 'Заявки на редактирование', sendRequest: 'Отправить заявку',
+            requestSent: 'Заявка отправлена', requestReason: 'Обоснование изменений', approveRequest: 'Одобрить',
+            rejectRequest: 'Отклонить', bio: 'О себе', cityLive: 'Город', website: 'Сайт', telegram: 'Telegram',
+            editProfile: 'Редактировать профиль', viewProfile: 'Просмотр профиля', banVote: 'Запрет голосования',
+            banComment: 'Запрет комментариев', unbanVote: 'Снять запрет голосования', unbanComment: 'Снять запрет комментариев',
+            voteRestricted: 'Голосование доступно только после публикации 3 фото', commentRestricted: 'Комментирование запрещено администратором'
+        },
+        be: { siteName: 'Multi Spotting Site', journal: 'Часопіс', upload: 'Загрузка', editVehicle: 'Прапанаваць змены', spottingStrip: 'Стужка спотынгу' },
+        en: { siteName: 'Multi Spotting Site', journal: 'Journal', upload: 'Upload', editVehicle: 'Suggest edit', spottingStrip: 'Spotting feed' }
+    };
+    
+    let curLang = localStorage.getItem('mss_lang') || 'ru';
+    function T(key) { return LOC[curLang][key] || LOC.ru[key] || key; }
+    
+    window.setLang = function(lang) {
+        curLang = lang;
+        localStorage.setItem('mss_lang', lang);
+        document.querySelectorAll('.lang-btn').forEach(btn => {
+            if(btn.textContent.toLowerCase() === lang) btn.classList.add('active');
+            else btn.classList.remove('active');
+        });
+        if(window.currentUser) renderMainApp();
+        else showAuth();
+    };
+
+    const VEHICLE_STATES = {
+        oper: { ru: 'Эксплуатируется', be: 'Эксплуатуецца', en: 'In operation', icon: 'fa-play-circle', color: '#2ecc71' },
+        repair: { ru: 'На ремонте', be: 'На рамонце', en: 'Under repair', icon: 'fa-wrench', color: '#e67e22' },
+        storage: { ru: 'На хранении', be: 'На захоўванні', en: 'In storage', icon: 'fa-warehouse', color: '#3498db' },
+        scrap: { ru: 'Списан', be: 'Спісаны', en: 'Scrapped', icon: 'fa-trash-alt', color: '#95a5a6' },
+        unknown: { ru: 'Неизвестно', be: 'Невядома', en: 'Unknown', icon: 'fa-question', color: '#7f8c8d' }
+    };
+    
+    function getStateText(state) { return VEHICLE_STATES[state]?.[curLang] || VEHICLE_STATES.unknown[curLang] || 'Неизвестно'; }
+    function getStateIcon(state) { return VEHICLE_STATES[state]?.icon || 'fa-question'; }
+
+    const FLAG_MAP = { 'россия':'ru','russia':'ru','германия':'de','germany':'de','сша':'us','usa':'us','беларусь':'by','belarus':'by' };
+    function getFlag(country) { if(!country) return '<i class="fas fa-globe"></i>'; let c = country.toLowerCase(); for(let [k,v] of Object.entries(FLAG_MAP)) if(c.includes(k)) return `<span class="fi fi-${v} fis" style="border-radius:3px; width:20px;"></span>`; return '<i class="fas fa-globe"></i>'; }
+    function formatLoc(loc) { return [loc.country, loc.city, loc.street].filter(Boolean).join(', ') || '—'; }
+    function escapeHtml(str) { return String(str || '').replace(/[&<>]/g, function(m){ return m==='&'?'&amp;':m==='<'?'&lt;':'&gt;';}); }
+
+    let vehiclesProfiles = {}, users = [], allPhotos = [], votes = [], comments = [], notifications = [], photoViews = [], editRequests = [];
+    let currentUser = null;
+    let currentMap = null;
+    let currentPage = 1;
+    const ITEMS_PER_PAGE = 9;
+
+    function showToast(msg) { let t = document.createElement('div'); t.className = 'toast'; t.innerHTML = '<i class="fas fa-check-circle"></i> ' + msg; document.body.appendChild(t); setTimeout(()=>t.remove(), 3000); }
+    function addNotification(userId, title, message) { let n = { id: Date.now(), userId, title, message, read: false, createdAt: Date.now() }; notifications.push(n); localStorage.setItem('mss_notifications', JSON.stringify(notifications)); if(currentUser?.id === userId) showToast(message); }
+    function updateNotifBadge() { let b = document.getElementById('notifBadge'); if(b) { let count = notifications.filter(n=>n.userId===currentUser?.id && !n.read).length; b.textContent = count || ''; } }
+    function saveAll() { 
+        localStorage.setItem('mss_users', JSON.stringify(users)); 
+        localStorage.setItem('mss_photos', JSON.stringify(allPhotos)); 
+        localStorage.setItem('mss_votes', JSON.stringify(votes)); 
+        localStorage.setItem('mss_comments', JSON.stringify(comments)); 
+        localStorage.setItem('mss_vehicles_profiles', JSON.stringify(vehiclesProfiles)); 
+        localStorage.setItem('mss_notifications', JSON.stringify(notifications));
+        localStorage.setItem('mss_photo_views', JSON.stringify(photoViews));
+        localStorage.setItem('mss_edit_requests', JSON.stringify(editRequests));
+    }
+
+    function canUserVote(user) {
+        if(user.role === 'admin') return true;
+        if(user.banVote) return false;
+        let userPhotosCount = allPhotos.filter(p => p.userId === user.id && (p.status === 'approved' || p.status === 'conditional')).length;
+        return userPhotosCount >= 3;
+    }
+
+    function canUserComment(user) {
+        if(user.role === 'admin') return true;
+        return !user.banComment;
+    }
+
+    function recordView(photoId) {
+        if(!currentUser) return;
+        let existing = photoViews.find(v => v.photoId === photoId && v.userId === currentUser.id);
+        if(!existing) {
+            photoViews.push({ photoId, userId: currentUser.id, viewedAt: Date.now() });
+            let photo = allPhotos.find(p => p.id === photoId);
+            if(photo) photo.views = (photo.views || 0) + 1;
+            saveAll();
+        }
+    }
+
+    function getUserVote(photoId) {
+        let v = votes.find(v => v.photoId === photoId && v.userId === currentUser?.id);
+        return v ? v.value : 0;
+    }
+
+    function initData() {
+        let u = localStorage.getItem('mss_users');
+        if(u) users = JSON.parse(u);
+        else users = [{ id: 'admin1', name: 'Администратор', email: 'admin@mail.com', password: 'admin123', role: 'admin', bio: 'Главный администратор', city: 'Москва', website: '', telegram: '', banVote: false, banComment: false }, 
+                      { id: 'demo1', name: 'Демо Пользователь', email: 'demo@mail.ru', password: 'demo123', role: 'user', bio: 'Люблю фотографировать технику', city: 'Минск', website: '', telegram: '@demo', banVote: false, banComment: false }];
+        let p = localStorage.getItem('mss_photos');
+        if(p) allPhotos = JSON.parse(p);
+        else allPhotos = [
+            { id: '1', userId: 'admin1', url: 'https://picsum.photos/id/111/800/600', thumb: 'https://picsum.photos/id/111/300/200', vehicle: 'BMW M3 E46', loc: { country: 'Германия', city: 'Мюнхен', street: 'BMW Strasse', lat: 48.1351, lng: 11.5820 }, status: 'approved', rating: 25, likes: 18, dislikes: 2, views: 45, createdAt: Date.now() },
+            { id: '2', userId: 'demo1', url: 'https://picsum.photos/id/222/800/600', thumb: 'https://picsum.photos/id/222/300/200', vehicle: 'Mercedes Actros', loc: { country: 'Германия', city: 'Штутгарт', lat: 48.7758, lng: 9.1829 }, status: 'approved', rating: 20, likes: 15, dislikes: 1, views: 32, createdAt: Date.now() - 3600000 },
+            { id: '3', userId: 'admin1', url: 'https://picsum.photos/id/333/800/600', thumb: 'https://picsum.photos/id/333/300/200', vehicle: 'Porsche 911 GT3', loc: { country: 'Германия', city: 'Штутгарт', lat: 48.7758, lng: 9.1829 }, status: 'approved', rating: 28, likes: 20, dislikes: 1, views: 67, createdAt: Date.now() - 7200000 }
+        ];
+        votes = JSON.parse(localStorage.getItem('mss_votes') || '[]');
+        comments = JSON.parse(localStorage.getItem('mss_comments') || '[]');
+        notifications = JSON.parse(localStorage.getItem('mss_notifications') || '[]');
+        photoViews = JSON.parse(localStorage.getItem('mss_photo_views') || '[]');
+        editRequests = JSON.parse(localStorage.getItem('mss_edit_requests') || '[]');
+        let vp = localStorage.getItem('mss_vehicles_profiles');
+        if(vp) vehiclesProfiles = JSON.parse(vp);
+        else vehiclesProfiles = { 
+            'BMW M3 E46': { model: 'BMW M3 E46', year: 2003, engine: '3.2 л S54', state: 'oper', purpose: 'Спорт-купе' },
+            'Mercedes Actros': { model: 'Actros MP4', year: 2018, engine: '12.8 л OM471', state: 'oper', purpose: 'Магистральный тягач' }
+        };
+        let sess = localStorage.getItem('mss_session');
+        if(sess) { try { let s = JSON.parse(sess); let uu = users.find(u=>u.id===s.userId); if(uu && s.expires > Date.now()) { currentUser = JSON.parse(JSON.stringify(uu)); delete currentUser.password; } } catch(e){} }
+        allPhotos.forEach(p => { if(p.likes === undefined) p.likes = 0; if(p.dislikes === undefined) p.dislikes = 0; if(p.views === undefined) p.views = 0; });
+        users.forEach(u => { if(u.banVote === undefined) u.banVote = false; if(u.banComment === undefined) u.banComment = false; if(u.bio === undefined) u.bio = ''; if(u.city === undefined) u.city = ''; if(u.website === undefined) u.website = ''; if(u.telegram === undefined) u.telegram = ''; });
+        saveAll();
+    }
+
+    function initMap(containerId, lat, lng, onSelect) {
+        setTimeout(() => {
+            if(window.L && document.getElementById(containerId)) {
+                if(currentMap && currentMap._container?.id === containerId) return;
+                let map = L.map(containerId).setView([lat, lng], 13);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+                let marker = L.marker([lat, lng], { draggable: !!onSelect }).addTo(map);
+                if(onSelect) {
+                    marker.on('dragend', function(e) { let pos = marker.getLatLng(); onSelect(pos.lat, pos.lng); });
+                    map.on('click', function(e) { marker.setLatLng(e.latlng); onSelect(e.latlng.lat, e.latlng.lng); });
+                }
+                currentMap = map;
+            }
+        }, 100);
+    }
+
+    window.toggleMap = function(containerId) {
+        let container = document.getElementById(containerId);
+        if(container) {
+            container.classList.toggle('collapsed');
+            let btn = document.querySelector(`button[onclick*="toggleMap('${containerId}')"]`);
+            if(btn) {
+                let isCollapsed = container.classList.contains('collapsed');
+                btn.innerHTML = `<i class="fas ${isCollapsed ? 'fa-expand' : 'fa-compress'}"></i> ${isCollapsed ? T('expandMap') : T('collapseMap')}`;
+            }
+            if(window.currentMap && !container.classList.contains('collapsed')) setTimeout(() => window.currentMap.invalidateSize(), 100);
+        }
+    };
+
+    function getBadgeClass(status) {
+        switch(status) {
+            case 'approved': return 'badge-approved';
+            case 'conditional': return 'badge-conditional';
+            case 'rejected': return 'badge-rejected';
+            default: return 'badge-pending';
+        }
+    }
+
+    function photoCard(photo, showActions = false) {
+        let badgeClass = getBadgeClass(photo.status);
+        let statusText = photo.status === 'approved' ? T('approved') : (photo.status === 'conditional' ? T('conditional') : (photo.status === 'rejected' ? T('rejected') : T('pending')));
+        let canEdit = currentUser && currentUser.role === 'admin';
+        let author = users.find(u => u.id === photo.userId);
+        let authorName = author?.name || '?';
+        let userVote = getUserVote(photo.id);
+        let canVote = currentUser && canUserVote(currentUser);
+        let actions = '';
+        if(showActions && canEdit) {
+            actions = `<div class="photo-actions"><button onclick="event.stopPropagation(); editPhoto('${photo.id}')" title="${T('editPhoto')}"><i class="fas fa-pen"></i></button><button class="danger" onclick="event.stopPropagation(); deletePhoto('${photo.id}')" title="${T('delete')}"><i class="fas fa-trash"></i></button></div>`;
+        }
+        return `<div class="photo-card" onclick="openFullscreen('${photo.id}')">
+            <img src="${photo.thumb}" loading="lazy">
+            <div class="photo-info">
+                <div class="vehicle-name" onclick="event.stopPropagation(); showVehiclePage('${escapeHtml(photo.vehicle)}')"><i class="fas fa-car"></i> ${photo.vehicle}</div>
+                <div class="location-line">${getFlag(photo.loc.country)} ${formatLoc(photo.loc)}</div>
+                <div class="photo-stats">
+                    <span><i class="fas fa-user"></i> <span onclick="event.stopPropagation(); showUserProfile('${photo.userId}')" style="cursor:pointer; color:#4a9eff;">${authorName}</span></span>
+                    <span><i class="fas fa-eye"></i> ${photo.views || 0} ${T('views')}</span>
+                    <span><i class="fas fa-comment"></i> ${comments.filter(c=>c.photoId===photo.id).length}</span>
+                </div>
+                <div class="vote-buttons">
+                    ${currentUser ? (canVote ? `<button class="vote-btn vote-up ${userVote === 1 ? 'vote-active-up' : ''}" onclick="event.stopPropagation(); quickVote('${photo.id}', 1)">+ ${photo.likes || 0}</button>
+                    <button class="vote-btn vote-down ${userVote === -1 ? 'vote-active-down' : ''}" onclick="event.stopPropagation(); quickVote('${photo.id}', -1)">- ${photo.dislikes || 0}</button>` : `<span class="vote-btn vote-disabled">+ ${photo.likes || 0} / - ${photo.dislikes || 0}</span><small style="color:#e74c3c;"> (${T('voteRestricted')})</small>`) : `<span class="vote-btn vote-disabled">+ ${photo.likes || 0} / - ${photo.dislikes || 0}</span>`}
+                </div>
+            </div>
+            <div class="status-badge ${badgeClass}">${statusText}</div>
+            ${actions}
+        </div>`;
+    }
+
+    window.quickVote = function(photoId, val) {
+        if(!currentUser) { alert(T('loginRequired')); return; }
+        if(!canUserVote(currentUser)) { alert(T('voteRestricted')); return; }
+        let photo = allPhotos.find(p => p.id === photoId);
+        if(photo.userId === currentUser.id) { alert('Нельзя голосовать за своё фото'); return; }
+        let existing = votes.find(v => v.photoId === photoId && v.userId === currentUser.id);
+        if(existing) {
+            if(existing.value === val) return;
+            if(val === 1) { photo.likes = (photo.likes || 0) + 1; photo.dislikes = (photo.dislikes || 0) - (existing.value === -1 ? 1 : 0); }
+            else if(val === -1) { photo.dislikes = (photo.dislikes || 0) + 1; photo.likes = (photo.likes || 0) - (existing.value === 1 ? 1 : 0); }
+            photo.rating += (val - existing.value);
+            existing.value = val;
+        } else {
+            if(val === 1) photo.likes = (photo.likes || 0) + 1;
+            else photo.dislikes = (photo.dislikes || 0) + 1;
+            photo.rating += val;
+            votes.push({ photoId, userId: currentUser.id, value: val });
+        }
+        saveAll();
+        if(window.currentView === 'home') filterGallery();
+        else if(window.currentView === 'vehicle') showVehiclePage(photo.vehicle);
+        else if(window.currentView === 'country') showCountryPhotos(window.currentCountry);
+        else if(window.currentView === 'journal') showJournal();
+        else if(window.currentView === 'profile' && window.currentProfileUser) showUserProfile(window.currentProfileUser);
+    };
+
+    window.deletePhoto = function(photoId) {
+        let photo = allPhotos.find(p => p.id === photoId);
+        if(!photo) return;
+        if(currentUser?.role !== 'admin') { alert('Только администратор может удалять фото'); return; }
+        if(confirm(T('confirmDeletePhoto'))) {
+            allPhotos = allPhotos.filter(p => p.id !== photoId);
+            votes = votes.filter(v => v.photoId !== photoId);
+            comments = comments.filter(c => c.photoId !== photoId);
+            photoViews = photoViews.filter(v => v.photoId !== photoId);
+            saveAll();
+            showToast('Фото удалено');
+            if(window.currentView === 'journal') showJournal();
+            else if(window.currentView === 'admin') showAdminPanel();
+            else if(window.currentView === 'country') showCountryPhotos(window.currentCountry);
+            else if(window.currentView === 'profile' && window.currentProfileUser) showUserProfile(window.currentProfileUser);
+            else renderHome();
+        }
+    };
+
+    window.editPhoto = function(photoId) {
+        let photo = allPhotos.find(p => p.id === photoId);
+        if(!photo) return;
+        if(currentUser?.role !== 'admin') { alert('Только администратор может редактировать фото'); return; }
+        let modal = document.createElement('div'); modal.className = 'edit-modal';
+        modal.innerHTML = `<div><h3><i class="fas fa-edit"></i> ${T('editPhoto')}</h3>
+            <div class="form-group"><label><i class="fas fa-car"></i> ${T('vehicle')}</label><input id="editVeh" value="${escapeHtml(photo.vehicle)}"></div>
+            <div class="form-group"><label><i class="fas fa-globe"></i> ${T('country')}</label><input id="editCountry" value="${escapeHtml(photo.loc.country || '')}"></div>
+            <div class="form-group"><label><i class="fas fa-city"></i> ${T('city')}</label><input id="editCity" value="${escapeHtml(photo.loc.city || '')}"></div>
+            <div class="form-group"><label><i class="fas fa-road"></i> ${T('street')}</label><input id="editStreet" value="${escapeHtml(photo.loc.street || '')}"></div>
+            <div class="map-wrapper"><div id="editMap" class="map-container"></div><button type="button" class="map-collapse-btn" onclick="toggleMap('editMap')"><i class="fas fa-compress"></i> ${T('collapseMap')}</button></div>
+            <div class="coord-input"><input type="text" id="editLat" placeholder="${T('latitude')}" value="${photo.loc.lat || 55.75}"><input type="text" id="editLng" placeholder="${T('longitude')}" value="${photo.loc.lng || 37.62}"></div>
+            <button onclick="savePhotoEdit('${photoId}')">${T('save')}</button>
+            <button onclick="this.closest('.edit-modal').remove()">${T('close')}</button></div>`;
+        document.body.appendChild(modal);
+        initMap('editMap', photo.loc.lat || 55.75, photo.loc.lng || 37.62, (lat, lng) => {
+            document.getElementById('editLat').value = lat.toFixed(6);
+            document.getElementById('editLng').value = lng.toFixed(6);
+        });
+    };
+
+    window.savePhotoEdit = function(photoId) {
+        let photo = allPhotos.find(p => p.id === photoId);
+        if(photo) {
+            photo.vehicle = document.getElementById('editVeh').value.trim();
+            photo.loc.country = document.getElementById('editCountry').value;
+            photo.loc.city = document.getElementById('editCity').value;
+            photo.loc.street = document.getElementById('editStreet').value;
+            photo.loc.lat = parseFloat(document.getElementById('editLat').value) || 55.75;
+            photo.loc.lng = parseFloat(document.getElementById('editLng').value) || 37.62;
+            if(!vehiclesProfiles[photo.vehicle]) vehiclesProfiles[photo.vehicle] = { model: photo.vehicle, state: 'unknown', purpose: '—' };
+            saveAll();
+            document.querySelector('.edit-modal')?.remove();
+            showToast('Фото обновлено');
+            if(window.currentView === 'journal') showJournal();
+            else if(window.currentView === 'admin') showAdminPanel();
+            else renderHome();
+        }
+    };
+
+    window.showJournal = function() {
+        window.currentView = 'journal';
+        let myPhotos = allPhotos.filter(p => p.userId === currentUser.id);
+        document.getElementById('mainContent').innerHTML = `<div class="section">
+            <h2><i class="fas fa-history"></i> ${T('journal')} <span style="font-size:0.9rem; opacity:0.7;">(${myPhotos.length})</span></h2>
+            ${myPhotos.length === 0 ? `<div style="text-align:center; padding:40px;">${T('noPhotos')}</div>` : `
+            <div class="journal-list">
+                ${myPhotos.map(photo => {
+                    let statusClass = photo.status === 'approved' ? 'approved' : (photo.status === 'conditional' ? 'conditional' : (photo.status === 'rejected' ? 'rejected' : 'pending'));
+                    let statusText = photo.status === 'approved' ? T('approved') : (photo.status === 'conditional' ? T('conditional') : (photo.status === 'rejected' ? T('rejected') : T('pending')));
+                    return `<div class="journal-item">
+                        <div class="journal-status-bar ${statusClass}"></div>
+                        <div class="journal-content">
+                            <img src="${photo.thumb}" class="journal-img" onclick="openFullscreen('${photo.id}')">
+                            <div class="journal-details">
+                                <h4><i class="fas fa-car"></i> ${photo.vehicle}</h4>
+                                <div><i class="fas fa-map-marker-alt"></i> ${formatLoc(photo.loc)}</div>
+                                <div class="journal-stats">
+                                    <span><i class="fas fa-star" style="color:#f1c40f;"></i> ${photo.rating}</span>
+                                    <span><i class="fas fa-thumbs-up" style="color:#2ecc71;"></i> ${photo.likes || 0}</span>
+                                    <span><i class="fas fa-thumbs-down" style="color:#e74c3c;"></i> ${photo.dislikes || 0}</span>
+                                    <span><i class="fas fa-eye"></i> ${photo.views || 0}</span>
+                                </div>
+                                <div><span class="status-badge ${getBadgeClass(photo.status)}" style="position:relative; top:0; right:0; display:inline-block;">${statusText}</span></div>
+                            </div>
+                            <div class="journal-actions">
+                                ${currentUser?.role === 'admin' ? `<button onclick="editPhoto('${photo.id}')"><i class="fas fa-edit"></i></button><button class="danger" onclick="deletePhoto('${photo.id}')"><i class="fas fa-trash"></i></button>` : ''}
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('')}
+            </div>`}
+        </div>`;
+    };
+
+    // Просмотр профиля другого пользователя
+    window.showUserProfile = function(userId) {
+        window.currentView = 'profile';
+        window.currentProfileUser = userId;
+        let targetUser = users.find(u => u.id === userId);
+        if(!targetUser) return;
+        let userPhotos = allPhotos.filter(p => p.userId === userId && (p.status === 'approved' || p.status === 'conditional'));
+        let canEdit = currentUser?.id === userId || currentUser?.role === 'admin';
+        let photoCount = userPhotos.length;
+        let canVoteStatus = canUserVote(targetUser);
+        
+        document.getElementById('mainContent').innerHTML = `<div class="section">
+            <h2><i class="fas fa-user"></i> ${T('viewProfile')}</h2>
+            <div class="profile-header">
+                <div class="profile-avatar"><i class="fas fa-user-circle"></i></div>
+                <div class="profile-info">
+                    <h3>${targetUser.name}</h3>
+                    <div>${targetUser.email}</div>
+                    <div>Роль: ${targetUser.role === 'admin' ? 'Администратор' : 'Пользователь'}</div>
+                    <div>Фото: ${photoCount}</div>
+                    <div>Статус голосования: ${canVoteStatus ? 'Разрешено' : 'Запрещено (нужно 3 фото)'}</div>
+                    <div>Статус комментариев: ${canUserComment(targetUser) ? 'Разрешено' : 'Запрещено администратором'}</div>
+                </div>
+            </div>
+            ${targetUser.bio ? `<div class="profile-bio"><i class="fas fa-info-circle"></i> ${targetUser.bio}</div>` : ''}
+            <div class="profile-bio" style="background:#0f141c;">
+                ${targetUser.city ? `<div><i class="fas fa-city"></i> ${targetUser.city}</div>` : ''}
+                ${targetUser.website ? `<div><i class="fas fa-globe"></i> <a href="${targetUser.website}" target="_blank" style="color:#4a9eff;">${targetUser.website}</a></div>` : ''}
+                ${targetUser.telegram ? `<div><i class="fab fa-telegram"></i> ${targetUser.telegram}</div>` : ''}
+            </div>
+            ${canEdit ? `<button onclick="editOwnProfile()"><i class="fas fa-edit"></i> ${T('editProfile')}</button>` : ''}
+            ${currentUser?.role === 'admin' && targetUser.id !== currentUser.id ? `
+                <div style="margin-top:20px; padding-top:20px; border-top:1px solid #2a3a4a;">
+                    <h4>Администрирование пользователя</h4>
+                    <button ${targetUser.banVote ? 'class="success"' : 'class="danger"'} onclick="toggleBanVote('${targetUser.id}')">${targetUser.banVote ? T('unbanVote') : T('banVote')}</button>
+                    <button ${targetUser.banComment ? 'class="success"' : 'class="danger"'} onclick="toggleBanComment('${targetUser.id}')">${targetUser.banComment ? T('unbanComment') : T('banComment')}</button>
+                    <button class="danger" onclick="deleteUser('${targetUser.id}')">${T('delete')} пользователя</button>
+                </div>
+            ` : ''}
+            <h3 style="margin-top:20px;"><i class="fas fa-images"></i> Фотографии пользователя (${photoCount})</h3>
+            <div class="photo-grid">${userPhotos.map(p => photoCard(p, currentUser?.role === 'admin')).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>'}</div>
+        </div>`;
+    };
+
+    window.toggleBanVote = function(userId) {
+        let user = users.find(u => u.id === userId);
+        if(user) {
+            user.banVote = !user.banVote;
+            saveAll();
+            showToast(`Голосование ${user.banVote ? 'запрещено' : 'разрешено'} для ${user.name}`);
+            showUserProfile(userId);
+        }
+    };
+
+    window.toggleBanComment = function(userId) {
+        let user = users.find(u => u.id === userId);
+        if(user) {
+            user.banComment = !user.banComment;
+            saveAll();
+            showToast(`Комментирование ${user.banComment ? 'запрещено' : 'разрешено'} для ${user.name}`);
+            showUserProfile(userId);
+        }
+    };
+
+    window.editOwnProfile = function() {
+        let user = users.find(u => u.id === currentUser.id);
+        let modal = document.createElement('div'); modal.className = 'edit-modal';
+        modal.innerHTML = `<div><h3><i class="fas fa-edit"></i> ${T('editProfile')}</h3>
+            <div class="form-group"><label>Имя</label><input id="editName" value="${escapeHtml(user.name)}"></div>
+            <div class="form-group"><label>${T('bio')}</label><textarea id="editBio" placeholder="Расскажите о себе">${escapeHtml(user.bio || '')}</textarea></div>
+            <div class="form-group"><label>${T('cityLive')}</label><input id="editCity" value="${escapeHtml(user.city || '')}" placeholder="Ваш город"></div>
+            <div class="form-group"><label>Веб-сайт</label><input id="editWebsite" value="${escapeHtml(user.website || '')}" placeholder="https://..."></div>
+            <div class="form-group"><label>Telegram</label><input id="editTelegram" value="${escapeHtml(user.telegram || '')}" placeholder="@username"></div>
+            <button onclick="saveProfileEdit()">${T('save')}</button>
+            <button onclick="this.closest('.edit-modal').remove()">${T('close')}</button></div>`;
+        document.body.appendChild(modal);
+    };
+
+    window.saveProfileEdit = function() {
+        let user = users.find(u => u.id === currentUser.id);
+        if(user) {
+            user.name = document.getElementById('editName').value;
+            user.bio = document.getElementById('editBio').value;
+            user.city = document.getElementById('editCity').value;
+            user.website = document.getElementById('editWebsite').value;
+            user.telegram = document.getElementById('editTelegram').value;
+            saveAll();
+            currentUser.name = user.name;
+            document.querySelector('.edit-modal')?.remove();
+            showToast('Профиль обновлён');
+            showUserProfile(currentUser.id);
+            renderHome();
+        }
+    };
+
+    window.showAdminPanel = function() {
+        if(currentUser?.role !== 'admin') return;
+        window.currentView = 'admin';
+        let pending = allPhotos.filter(p => p.status === 'pending');
+        let pendingRequests = editRequests.filter(r => r.status === 'pending');
+        document.getElementById('mainContent').innerHTML = `<div class="section">
+            <h2><i class="fas fa-cogs"></i> ${T('adminPanel')}</h2>
+            <div class="admin-stats">
+                <div class="stat-card"><div class="stat-number">${users.length}</div><div>${T('users')}</div></div>
+                <div class="stat-card"><div class="stat-number">${allPhotos.length}</div><div>${T('totalPhotos')}</div></div>
+                <div class="stat-card"><div class="stat-number">${pending.length}</div><div>${T('onModeration')}</div></div>
+                <div class="stat-card"><div class="stat-number">${pendingRequests.length}</div><div>${T('editRequests')}</div></div>
+            </div>
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchAdminTab('moderation')">${T('moderation')} (${pending.length})</button>
+                <button class="tab-btn" onclick="switchAdminTab('requests')">${T('editRequests')} (${pendingRequests.length})</button>
+                <button class="tab-btn" onclick="switchAdminTab('all')">${T('allPhotosAdmin')}</button>
+                <button class="tab-btn" onclick="switchAdminTab('users')">${T('usersManagement')}</button>
+            </div>
+            <div id="adminTabContent"></div>
+        </div>`;
+        window.switchAdminTab = function(tab) {
+            let content = document.getElementById('adminTabContent');
+            if(tab === 'moderation') {
+                content.innerHTML = `<div class="photo-grid">${pending.map(p => adminModCard(p)).join('') || '<div style="text-align:center; padding:40px;">Нет фото на модерации</div>'}</div>`;
+            } else if(tab === 'requests') {
+                content.innerHTML = `<div class="journal-list">${pendingRequests.map(r => requestCard(r)).join('') || '<div style="text-align:center; padding:40px;">Нет заявок</div>'}</div>`;
+            } else if(tab === 'all') {
+                content.innerHTML = `<div class="search-bar"><input type="text" id="adminSearch" placeholder="${T('searchPlaceholder')}" oninput="filterAdminPhotos()"><select id="adminStatusFilter" onchange="filterAdminPhotos()"><option value="all">${T('allStatuses')}</option><option value="approved">${T('approved')}</option><option value="conditional">${T('conditional')}</option><option value="pending">${T('pending')}</option><option value="rejected">${T('rejected')}</option></select></div><div id="adminAllPhotosGrid" class="photo-grid"></div>`;
+                filterAdminPhotos();
+            } else {
+                content.innerHTML = `<div id="adminUserList"></div>`;
+                document.getElementById('adminUserList').innerHTML = users.map(u => `<div class="user-card"><i class="fas fa-user-circle"></i> <strong>${u.name}</strong> (${u.email}) — роль: ${u.role} 
+                    <select id="role_${u.id}" style="margin-left:auto;"><option ${u.role==='user'?'selected':''}>user</option><option ${u.role==='admin'?'selected':''}>admin</option></select>
+                    <button onclick="changeUserRole('${u.id}')"><i class="fas fa-save"></i></button>
+                    <button onclick="showUserProfile('${u.id}')"><i class="fas fa-eye"></i></button>
+                    ${u.id !== currentUser.id ? `<button class="danger" onclick="deleteUser('${u.id}')"><i class="fas fa-trash"></i></button>` : ''}
+                </div>`).join('');
+            }
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+        };
+        window.filterAdminPhotos = function() {
+            let search = document.getElementById('adminSearch')?.value.toLowerCase() || '';
+            let status = document.getElementById('adminStatusFilter')?.value || 'all';
+            let filtered = allPhotos.filter(p => {
+                let matchSearch = p.vehicle.toLowerCase().includes(search) || (p.loc.country || '').toLowerCase().includes(search);
+                let matchStatus = status === 'all' || p.status === status;
+                return matchSearch && matchStatus;
+            });
+            let grid = document.getElementById('adminAllPhotosGrid');
+            if(grid) grid.innerHTML = filtered.map(p => photoCard(p, true)).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>';
+        };
+        switchAdminTab('moderation');
+    };
+
+    function requestCard(req) {
+        let changesHtml = Object.entries(req.changes).map(([k,v]) => `<div><strong>${k}:</strong> ${v || '—'}</div>`).join('');
+        return `<div class="journal-item">
+            <div class="journal-status-bar pending"></div>
+            <div class="journal-content">
+                <div class="journal-details">
+                    <h4><i class="fas fa-truck"></i> ${req.vehicleName}</h4>
+                    <div><i class="fas fa-user"></i> ${req.userName}</div>
+                    <div><i class="fas fa-comment"></i> ${req.reason || 'Без пояснения'}</div>
+                    <div style="margin-top:10px; padding:10px; background:#0f141c; border-radius:8px;">${changesHtml}</div>
+                </div>
+                <div class="journal-actions">
+                    <button class="success" onclick="approveEditRequest('${req.id}')"><i class="fas fa-check"></i> ${T('approveRequest')}</button>
+                    <button class="danger" onclick="rejectEditRequest('${req.id}')"><i class="fas fa-times"></i> ${T('rejectRequest')}</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    window.approveEditRequest = function(requestId) {
+        let req = editRequests.find(r => r.id == requestId);
+        if(req) {
+            vehiclesProfiles[req.vehicleName] = req.changes;
+            req.status = 'approved';
+            saveAll();
+            addNotification(req.userId, 'Заявка одобрена', `Ваше предложение по изменению ТС "${req.vehicleName}" принято`);
+            showToast('Заявка одобрена');
+            showAdminPanel();
+        }
+    };
+
+    window.rejectEditRequest = function(requestId) {
+        let req = editRequests.find(r => r.id == requestId);
+        if(req) {
+            req.status = 'rejected';
+            saveAll();
+            addNotification(req.userId, 'Заявка отклонена', `Ваше предложение по изменению ТС "${req.vehicleName}" отклонено`);
+            showToast('Заявка отклонена');
+            showAdminPanel();
+        }
+    };
+
+    function adminModCard(p) {
+        return `<div class="photo-card"><img src="${p.thumb}"><div class="photo-info"><strong>${p.vehicle}</strong><div>${formatLoc(p.loc)}</div><div><i class="fas fa-user"></i> ${users.find(u=>u.id===p.userId)?.name}</div><textarea id="rejectReason_${p.id}" placeholder="Причина отклонения..." style="width:100%; margin:8px 0; padding:8px; border-radius:8px;"></textarea><div style="display:flex; gap:8px;"><button class="success" onclick="moderatePhoto('${p.id}','approved')"><i class="fas fa-check"></i> ${T('acceptFull')}</button><button onclick="moderatePhoto('${p.id}','conditional')"><i class="fas fa-question"></i> ${T('accept')}</button><button class="danger" onclick="moderatePhoto('${p.id}','rejected')"><i class="fas fa-ban"></i> ${T('reject')}</button></div></div></div>`;
+    }
+
+    window.moderatePhoto = function(id, status) {
+        let photo = allPhotos.find(p => p.id === id);
+        if(photo) {
+            photo.status = status;
+            if(status === 'rejected') {
+                let reason = document.getElementById(`rejectReason_${id}`)?.value || 'Не указана';
+                addNotification(photo.userId, 'Фото отклонено', `Ваше фото "${photo.vehicle}" отклонено. Причина: ${reason}`);
+            } else if(status === 'approved') {
+                addNotification(photo.userId, 'Фото одобрено', `Ваше фото "${photo.vehicle}" прошло модерацию!`);
+            }
+            saveAll();
+            showToast(`Фото ${status === 'approved' ? 'одобрено' : (status === 'conditional' ? 'принято условно' : 'отклонено')}`);
+            showAdminPanel();
+            if(window.currentView === 'home') renderHome();
+        }
+    };
+
+    window.changeUserRole = function(userId) {
+        let user = users.find(u => u.id === userId);
+        if(user && user.id !== currentUser.id) {
+            user.role = document.getElementById(`role_${userId}`).value;
+            saveAll();
+            showToast(`Роль пользователя ${user.name} изменена`);
+            showAdminPanel();
+        }
+    };
+
+    window.deleteUser = function(userId) {
+        if(userId === currentUser.id) { alert('Нельзя удалить себя'); return; }
+        if(confirm(T('deleteUserConfirm'))) {
+            users = users.filter(u => u.id !== userId);
+            allPhotos = allPhotos.filter(p => p.userId !== userId);
+            votes = votes.filter(v => v.userId !== userId);
+            comments = comments.filter(c => c.userId !== userId);
+            photoViews = photoViews.filter(v => v.userId !== userId);
+            saveAll();
+            showToast('Пользователь удалён');
+            if(window.currentView === 'profile' && window.currentProfileUser === userId) renderHome();
+            showAdminPanel();
+            renderHome();
+        }
+    };
+
+    window.requestVehicleEdit = function(vehicleName) {
+        let profile = vehiclesProfiles[vehicleName] || {};
+        let modal = document.createElement('div'); modal.className = 'edit-modal';
+        let stateOptions = Object.keys(VEHICLE_STATES).map(s => `<option value="${s}" ${profile.state===s?'selected':''}>${getStateText(s)}</option>`).join('');
+        modal.innerHTML = `<div><h3><i class="fas fa-edit"></i> ${T('editVehicle')}</h3>
+            <div class="form-group"><label>${T('model')}</label><input id="reqModel" value="${profile.model || vehicleName}"></div>
+            <div class="form-group"><label>${T('year')}</label><input id="reqYear" value="${profile.year || ''}"></div>
+            <div class="form-group"><label>${T('engine')}</label><input id="reqEngine" value="${profile.engine || ''}"></div>
+            <div class="form-group"><label>${T('currentState')}</label><select id="reqState">${stateOptions}</select></div>
+            <div class="form-group"><label>${T('purpose')}</label><textarea id="reqPurpose">${profile.purpose || ''}</textarea></div>
+            <div class="form-group"><label>${T('requestReason')}</label><textarea id="reqReason" placeholder="Опишите причину изменений..."></textarea></div>
+            <button onclick="submitEditRequest('${escapeHtml(vehicleName)}')">${T('sendRequest')}</button>
+            <button onclick="this.closest('.edit-modal').remove()">${T('close')}</button></div>`;
+        document.body.appendChild(modal);
+    };
+
+    window.submitEditRequest = function(vehicleName) {
+        let request = {
+            id: Date.now(),
+            vehicleName: vehicleName,
+            userId: currentUser.id,
+            userName: currentUser.name,
+            changes: {
+                model: document.getElementById('reqModel').value,
+                year: document.getElementById('reqYear').value,
+                engine: document.getElementById('reqEngine').value,
+                state: document.getElementById('reqState').value,
+                purpose: document.getElementById('reqPurpose').value
+            },
+            reason: document.getElementById('reqReason').value,
+            status: 'pending',
+            createdAt: Date.now()
+        };
+        editRequests.push(request);
+        saveAll();
+        addNotification('admin1', 'Новая заявка на редактирование', `Пользователь ${currentUser.name} предлагает изменения для ТС "${vehicleName}"`);
+        document.querySelector('.edit-modal')?.remove();
+        showToast(T('requestSent'));
+        showVehiclePage(vehicleName);
+    };
+
+    window.showVehiclePage = function(vehicleName) {
+        window.currentView = 'vehicle';
+        let photos = allPhotos.filter(p => p.vehicle === vehicleName && (p.status === 'approved' || p.status === 'conditional'));
+        let profile = vehiclesProfiles[vehicleName] || { model: vehicleName, year: '—', engine: '—', state: 'unknown', purpose: '—' };
+        document.getElementById('mainContent').innerHTML = `<div class="section">
+            <h2><i class="fas fa-truck"></i> ${vehicleName}</h2>
+            <div class="vehicle-profile-card">
+                <div class="vehicle-meta">
+                    <div class="meta-item"><div class="meta-label"><i class="fas fa-tag"></i> ${T('model')}</div><strong>${profile.model}</strong></div>
+                    <div class="meta-item"><div class="meta-label"><i class="fas fa-calendar"></i> ${T('year')}</div>${profile.year || '—'}</div>
+                    <div class="meta-item"><div class="meta-label"><i class="fas fa-engine"></i> ${T('engine')}</div>${profile.engine || '—'}</div>
+                    <div class="meta-item"><div class="meta-label"><i class="fas ${getStateIcon(profile.state)}"></i> ${T('currentState')}</div><span style="color:${VEHICLE_STATES[profile.state]?.color || '#7f8c8d'}"><i class="fas ${getStateIcon(profile.state)}"></i> ${getStateText(profile.state)}</span></div>
+                    <div class="meta-item"><div class="meta-label"><i class="fas fa-bullseye"></i> ${T('purpose')}</div>${profile.purpose}</div>
+                </div>
+                ${currentUser?.role === 'admin' ? `<button onclick="editVehicleProfile('${escapeHtml(vehicleName)}')"><i class="fas fa-edit"></i> Редактировать ТС</button>` : `<button onclick="requestVehicleEdit('${escapeHtml(vehicleName)}')"><i class="fas fa-edit"></i> ${T('editVehicle')}</button>`}
+            </div>
+            <h3><i class="fas fa-images"></i> Фотографии (${photos.length})</h3>
+            <div class="photo-grid">${photos.map(p => photoCard(p, false)).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>'}</div>
+        </div>`;
+    };
+
+    window.editVehicleProfile = function(vehicleName) {
+        let profile = vehiclesProfiles[vehicleName] || {};
+        let stateOptions = Object.keys(VEHICLE_STATES).map(s => `<option value="${s}" ${profile.state===s?'selected':''}>${getStateText(s)}</option>`).join('');
+        let modal = document.createElement('div'); modal.className = 'edit-modal';
+        modal.innerHTML = `<div><h3><i class="fas fa-edit"></i> ${T('editVehicle')}</h3>
+            <div class="form-group"><label>${T('model')}</label><input id="editModel" value="${profile.model || vehicleName}"></div>
+            <div class="form-group"><label>${T('year')}</label><input id="editYear" value="${profile.year || ''}"></div>
+            <div class="form-group"><label>${T('engine')}</label><input id="editEngine" value="${profile.engine || ''}"></div>
+            <div class="form-group"><label>${T('currentState')}</label><select id="editState">${stateOptions}</select></div>
+            <div class="form-group"><label>${T('purpose')}</label><textarea id="editPurpose">${profile.purpose || ''}</textarea></div>
+            <button onclick="saveVehicleProfile('${escapeHtml(vehicleName)}')">${T('save')}</button>
+            <button onclick="this.closest('.edit-modal').remove()">${T('close')}</button></div>`;
+        document.body.appendChild(modal);
+    };
+
+    window.saveVehicleProfile = function(vehicleName) {
+        let newModel = document.getElementById('editModel').value;
+        let profile = {
+            model: newModel || vehicleName,
+            year: document.getElementById('editYear').value,
+            engine: document.getElementById('editEngine').value,
+            state: document.getElementById('editState').value,
+            purpose: document.getElementById('editPurpose').value
+        };
+        vehiclesProfiles[vehicleName] = profile;
+        if(newModel && newModel !== vehicleName) {
+            delete vehiclesProfiles[vehicleName];
+            vehiclesProfiles[newModel] = profile;
+            allPhotos.forEach(p => { if(p.vehicle === vehicleName) p.vehicle = newModel; });
+        }
+        saveAll();
+        document.querySelector('.edit-modal')?.remove();
+        showToast('Профиль ТС обновлён');
+        showVehiclePage(newModel || vehicleName);
+        renderHome();
+    };
+
+    window.showUploadForm = function() {
+        window.currentView = 'upload';
+        document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-cloud-upload-alt"></i> ${T('upload')}</h2>
+            <div class="form-group"><label><i class="fas fa-image"></i> ${T('file')}</label><input type="file" id="uploadFile" accept="image/*"></div>
+            <div class="form-group"><label><i class="fas fa-car"></i> ${T('vehicle')}</label><input id="uploadVehicle" placeholder="Например: BMW X5"></div>
+            <div class="form-group"><label><i class="fas fa-globe"></i> ${T('country')}</label><input id="uploadCountry"></div>
+            <div class="form-group"><label><i class="fas fa-city"></i> ${T('city')}</label><input id="uploadCity"></div>
+            <div class="form-group"><label><i class="fas fa-road"></i> ${T('street')}</label><input id="uploadStreet"></div>
+            <div class="map-wrapper"><div id="uploadMap" class="map-container"></div><button type="button" class="map-collapse-btn" onclick="toggleMap('uploadMap')"><i class="fas fa-compress"></i> ${T('collapseMap')}</button></div>
+            <div class="coord-input"><input type="text" id="uploadLat" placeholder="${T('latitude')}" value="55.751244"><input type="text" id="uploadLng" placeholder="${T('longitude')}" value="37.618423"></div>
+            <button onclick="doUpload()"><i class="fas fa-upload"></i> ${T('send')}</button></div>`;
+        initMap('uploadMap', 55.751244, 37.618423, (lat, lng) => {
+            document.getElementById('uploadLat').value = lat.toFixed(6);
+            document.getElementById('uploadLng').value = lng.toFixed(6);
+        });
+    };
+
+    window.doUpload = function() {
+        let file = document.getElementById('uploadFile').files[0];
+        if(!file) { alert('Выберите файл'); return; }
+        let vehicle = document.getElementById('uploadVehicle').value.trim();
+        if(!vehicle) { alert('Введите название ТС'); return; }
+        let reader = new FileReader();
+        reader.onload = e => {
+            let newPhoto = {
+                id: Date.now()+'', userId: currentUser.id, url: e.target.result, thumb: e.target.result, vehicle: vehicle,
+                loc: { 
+                    country: document.getElementById('uploadCountry').value, 
+                    city: document.getElementById('uploadCity').value, 
+                    street: document.getElementById('uploadStreet').value,
+                    lat: parseFloat(document.getElementById('uploadLat').value) || 55.751244,
+                    lng: parseFloat(document.getElementById('uploadLng').value) || 37.618423
+                },
+                status: 'pending', rating: 0, likes: 0, dislikes: 0, views: 0, createdAt: Date.now()
+            };
+            allPhotos.push(newPhoto);
+            if(!vehiclesProfiles[vehicle]) vehiclesProfiles[vehicle] = { model: vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
+            saveAll();
+            addNotification('admin1', 'Новое фото', `Пользователь ${currentUser.name} загрузил фото: ${vehicle}`);
+            alert(T('uploadSuccess'));
+            renderHome();
+        };
+        reader.readAsDataURL(file);
+    };
+
+    function showProfile() { showUserProfile(currentUser.id); }
+    function showNotifications() { 
+        let myNotifs = notifications.filter(n=>n.userId===currentUser.id).reverse(); 
+        myNotifs.forEach(n=>n.read=true); 
+        localStorage.setItem('mss_notifications', JSON.stringify(notifications)); 
+        updateNotifBadge(); 
+        document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-bell"></i> ${T('notifications')}</h2>${myNotifs.map(n=>`<div class="user-card"><strong>${n.title}</strong><br>${n.message}<br><small>${new Date(n.createdAt).toLocaleString()}</small></div>`).join('')||'<p>Нет уведомлений</p>'}</div>`; 
+    }
+    
+    window.changeNickname = function() { 
+        let n = prompt('Новый никнейм', currentUser.name); 
+        if(n && n.trim()) { 
+            currentUser.name = n.trim(); 
+            let u = users.find(u=>u.id===currentUser.id); 
+            if(u) u.name = n.trim(); 
+            saveAll(); 
+            showProfile(); 
+            renderHome(); 
+            showToast('Никнейм изменён');
+        } 
+    };
+    
+    function showStatistics() { 
+        let approved = allPhotos.filter(p=>p.status==='approved');
+        document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-chart-pie"></i> ${T('statistics')}</h2>
+            <div class="admin-stats">
+                <div class="stat-card"><div class="stat-number">${approved.length}</div><div>${T('approved')}</div></div>
+                <div class="stat-card"><div class="stat-number">${allPhotos.filter(p=>p.status==='pending').length}</div><div>${T('pending')}</div></div>
+                <div class="stat-card"><div class="stat-number">${approved.reduce((s,p)=>s+(p.likes||0),0)}</div><div>Всего лайков</div></div>
+                <div class="stat-card"><div class="stat-number">${approved.reduce((s,p)=>s+(p.views||0),0)}</div><div>Всего просмотров</div></div>
+            </div>
+        </div>`; 
+    }
+    
+    function showContest() { 
+        let top = [...allPhotos.filter(p=>p.status==='approved')].sort((a,b)=>b.rating-a.rating).slice(0,6); 
+        document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-trophy"></i> ${T('contest')}</h2><div class="photo-grid">${top.map(p=>photoCard(p, false)).join('')}</div></div>`; 
+    }
+    
+    function showMyPhotos() { 
+        let my = allPhotos.filter(p=>p.userId===currentUser.id); 
+        document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-images"></i> ${T('myPhotos')}</h2><div class="photo-grid">${my.map(p=>photoCard(p, false)).join('')||'<div style="text-align:center; padding:40px;">Нет фото</div>'}</div></div>`; 
+    }
+    
+    // ========== ГЛАВНАЯ С КОЛОНКАМИ ==========
+    function renderHome() { 
+        window.currentView = 'home'; 
+        currentPage = 1;
+        let visible = allPhotos.filter(p => p.status === 'approved' || p.status === 'conditional');
+        let countries = [...new Set(visible.map(p => p.loc?.country).filter(Boolean))];
+        let topPhotos = [...visible].sort((a,b)=>b.rating-a.rating).slice(0,3);
+        let randomPhotos = [...visible].sort(()=>0.5-Math.random()).slice(0,3);
+        let newPhotos = [...visible].sort((a,b)=>b.createdAt - a.createdAt).slice(0,3);
+        
+        let html = `<div class="section"><h3><i class="fas fa-images"></i> ${T('spottingStrip')}</h3><div class="horizontal-scroll"><div class="thumb-strip">${visible.slice(0,10).map(p=>`<div class="strip-card" onclick="openFullscreen('${p.id}')"><img src="${p.thumb}"><span>${p.vehicle}</span></div>`).join('')}</div></div></div>
+            <div class="section"><h3><i class="fas fa-globe"></i> ${T('countries')}</h3><div class="filter-bar">${countries.map(c => `<span class="filter-chip" onclick="showCountryPhotos('${escapeHtml(c)}')">${getFlag(c)} ${c} (${visible.filter(p=>p.loc?.country===c).length})</span>`).join('')}</div></div>
+            <div class="main-two-columns">
+                <div class="main-center">
+                    <div class="section">
+                        <h3><i class="fas fa-search"></i> ${T('search')}</h3>
+                        <div class="search-bar">
+                            <input type="text" id="searchInput" placeholder="${T('searchPlaceholder')}" oninput="filterGallery()">
+                            <select id="statusFilter" onchange="filterGallery()"><option value="all">${T('allStatuses')}</option><option value="approved">${T('approved')}</option><option value="conditional">${T('conditional')}</option></select>
+                            <button onclick="filterGallery()"><i class="fas fa-search"></i> ${T('search')}</button>
+                        </div>
+                        <div id="galleryGrid" class="photo-grid"></div>
+                        <div id="galleryPagination"></div>
+                    </div>
+                </div>
+                <div class="main-sidebar">
+                    <div class="side-block"><h4><i class="fas fa-trophy"></i> Топ фото</h4>${topPhotos.map(p=>`<div class="random-item" style="display:flex; gap:10px; margin-bottom:12px; align-items:center; cursor:pointer; padding:8px; border-radius:10px;" onclick="openFullscreen('${p.id}')"><img src="${p.thumb}" style="width:55px; height:55px; object-fit:cover; border-radius:8px;"><div><strong>${p.vehicle}</strong><br><i class="fas fa-star" style="color:#f1c40f;"></i> ${p.rating}</div></div>`).join('')}</div>
+                    <div class="side-block"><h4><i class="fas fa-clock"></i> Новые фото</h4>${newPhotos.map(p=>`<div class="random-item" style="display:flex; gap:10px; margin-bottom:12px; align-items:center; cursor:pointer; padding:8px; border-radius:10px;" onclick="openFullscreen('${p.id}')"><img src="${p.thumb}" style="width:55px; height:55px; object-fit:cover; border-radius:8px;"><div><strong>${p.vehicle}</strong><br><i class="fas fa-calendar"></i> ${new Date(p.createdAt).toLocaleDateString()}</div></div>`).join('')}</div>
+                    <div class="side-block"><h4><i class="fas fa-random"></i> Случайные фото</h4>${randomPhotos.map(p=>`<div class="random-item" style="display:flex; gap:10px; margin-bottom:12px; align-items:center; cursor:pointer; padding:8px; border-radius:10px;" onclick="openFullscreen('${p.id}')"><img src="${p.thumb}" style="width:55px; height:55px; object-fit:cover; border-radius:8px;"><div><strong>${p.vehicle}</strong></div></div>`).join('')}</div>
+                </div>
+            </div>`;
+        document.getElementById('mainContent').innerHTML = html;
+        filterGallery();
+    }
+    
+    window.filterGallery = function() {
+        let searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
+        let statusFilter = document.getElementById('statusFilter')?.value || 'all';
+        let visible = allPhotos.filter(p => (p.status === 'approved' || p.status === 'conditional') && (statusFilter === 'all' || p.status === statusFilter));
+        if(searchTerm) {
+            visible = visible.filter(p => p.vehicle.toLowerCase().includes(searchTerm) || (p.loc.country || '').toLowerCase().includes(searchTerm) || (p.loc.city || '').toLowerCase().includes(searchTerm));
+        }
+        let totalPages = Math.ceil(visible.length / ITEMS_PER_PAGE);
+        let start = (currentPage - 1) * ITEMS_PER_PAGE;
+        let paginated = visible.slice(start, start + ITEMS_PER_PAGE);
+        let paginationHtml = '';
+        if(totalPages > 1) {
+            paginationHtml = '<div class="pagination">';
+            for(let i = 1; i <= Math.min(totalPages, 10); i++) {
+                paginationHtml += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+            }
+            paginationHtml += '</div>';
+        }
+        let grid = document.getElementById('galleryGrid');
+        if(grid) grid.innerHTML = paginated.map(p => photoCard(p, false)).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>';
+        let pagContainer = document.getElementById('galleryPagination');
+        if(pagContainer) pagContainer.innerHTML = paginationHtml;
+    };
+    
+    window.goToPage = function(page) { currentPage = page; filterGallery(); };
+    
+    window.showCountryPhotos = function(country) {
+        window.currentView = 'country';
+        window.currentCountry = country;
+        let photos = allPhotos.filter(p => (p.status === 'approved' || p.status === 'conditional') && p.loc?.country === country);
+        let cities = [...new Set(photos.map(p => p.loc?.city).filter(Boolean))];
+        function renderCity(city) {
+            let filtered = city ? photos.filter(p => p.loc?.city === city) : photos;
+            document.getElementById('countryContent').innerHTML = `
+                <div class="filter-bar"><span class="filter-chip ${!city ? 'active' : ''}" onclick="renderCity(null)"><i class="fas fa-city"></i> ${T('allCities')} (${photos.length})</span>${cities.map(c => `<span class="filter-chip ${city===c?'active':''}" onclick="renderCity('${escapeHtml(c)}')"><i class="fas fa-location-dot"></i> ${c} (${photos.filter(p=>p.loc?.city===c).length})</span>`).join('')}</div>
+                <div class="photo-grid">${filtered.map(p => photoCard(p, false)).join('') || '<div style="text-align:center; padding:40px;">Нет фото</div>'}</div>`;
+        }
+        window.renderCity = renderCity;
+        document.getElementById('mainContent').innerHTML = `<div class="section"><h2>${getFlag(country)} ${country}</h2><button onclick="renderHome()"><i class="fas fa-arrow-left"></i> ${T('back')}</button><div id="countryContent"></div></div>`;
+        renderCity(null);
+    };
+    
+    // ========== FULLSCREEN С УДАЛЕНИЕМ КОММЕНТАРИЕВ ==========
+    window.openFullscreen = function(id) { 
+        recordView(id);
+        let photo = allPhotos.find(p=>p.id===id); 
+        if(!photo) return; 
+        let commentsList = comments.filter(c=>c.photoId===id); 
+        let userVote = getUserVote(id);
+        let canVote = currentUser && canUserVote(currentUser);
+        let canComment = currentUser && canUserComment(currentUser);
+        let viewer = document.getElementById('fullscreenViewer'); 
+        viewer.innerHTML = `<button class="fullscreen-close" onclick="closeFullscreen()"><i class="fas fa-times"></i></button>
+            <div class="fullscreen-image"><img src="${photo.url}"></div>
+            <div class="fullscreen-info">
+                <div><strong><i class="fas fa-car"></i> ${photo.vehicle}</strong> | ${getFlag(photo.loc.country)} ${formatLoc(photo.loc)}</div>
+                <div class="photo-stats" style="margin:10px 0;"><span><i class="fas fa-eye"></i> ${photo.views || 0} ${T('views')}</span><span><i class="fas fa-comment"></i> ${commentsList.length}</span></div>
+                <div style="margin-top:10px;">${currentUser ? (photo.userId !== currentUser.id ? (canVote ? `<button onclick="fullscreenVote('${id}', 1)" style="margin-right:10px;" class="vote-btn vote-up ${userVote === 1 ? 'vote-active-up' : ''}">+ ${photo.likes || 0}</button><button onclick="fullscreenVote('${id}', -1)" class="vote-btn vote-down ${userVote === -1 ? 'vote-active-down' : ''}">- ${photo.dislikes || 0}</button>` : `<span class="vote-btn vote-disabled">+ ${photo.likes || 0} / - ${photo.dislikes || 0}</span><small> (${T('voteRestricted')})</small>`) : `<span>Нельзя голосовать за своё фото</span>`) : `<a href="#" onclick="showAuth();return false;">${T('loginRequired')}</a>`}</div>
+                <div><h4><i class="fas fa-comments"></i> ${T('comments')}</h4>${commentsList.map(c=>`<div class="comment"><div class="comment-text"><strong><i class="fas fa-user"></i> <span onclick="closeFullscreen(); showUserProfile('${c.userId}')" style="cursor:pointer; color:#4a9eff;">${users.find(u=>u.id===c.userId)?.name}</span></strong><br>${c.text}</div><div class="comment-actions">${(currentUser?.role === 'admin' || currentUser?.id === c.userId) ? `<button class="danger" onclick="deleteComment('${c.id}', '${id}')" style="padding:4px 8px;"><i class="fas fa-trash"></i></button>` : ''}</div></div>`).join('')}<div class="comment-form">${currentUser ? (canComment ? `<input id="newComm" placeholder="${T('writeComment')}" style="flex:1; padding:10px; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px; color:white;"><button onclick="addComment('${id}')"><i class="fas fa-paper-plane"></i> ${T('send')}</button>` : `<span style="color:#e74c3c;">${T('commentRestricted')}</span>`) : ''}</div></div>
+            </div>`; 
+        viewer.classList.add('active'); 
+    };
+    
+    window.deleteComment = function(commentId, photoId) {
+        comments = comments.filter(c => c.id != commentId);
+        saveAll();
+        openFullscreen(photoId);
+        showToast('Комментарий удалён');
+    };
+    
+    window.fullscreenVote = function(id, val) {
+        if(!currentUser) return;
+        if(!canUserVote(currentUser)) { alert(T('voteRestricted')); return; }
+        let photo = allPhotos.find(p => p.id === id);
+        if(photo.userId === currentUser.id) { alert('Нельзя голосовать за своё фото'); return; }
+        let existing = votes.find(v => v.photoId === id && v.userId === currentUser.id);
+        if(existing) {
+            if(existing.value === val) return;
+            if(val === 1) { photo.likes = (photo.likes || 0) + 1; photo.dislikes = (photo.dislikes || 0) - (existing.value === -1 ? 1 : 0); }
+            else if(val === -1) { photo.dislikes = (photo.dislikes || 0) + 1; photo.likes = (photo.likes || 0) - (existing.value === 1 ? 1 : 0); }
+            photo.rating += (val - existing.value);
+            existing.value = val;
+        } else {
+            if(val === 1) photo.likes = (photo.likes || 0) + 1;
+            else photo.dislikes = (photo.dislikes || 0) + 1;
+            photo.rating += val;
+            votes.push({ photoId: id, userId: currentUser.id, value: val });
+        }
+        saveAll();
+        openFullscreen(id);
+        if(window.currentView === 'home') filterGallery();
+        else if(window.currentView === 'country') showCountryPhotos(window.currentCountry);
+        else if(window.currentView === 'vehicle') showVehiclePage(photo.vehicle);
+        else if(window.currentView === 'profile' && window.currentProfileUser) showUserProfile(window.currentProfileUser);
+    };
+    
+    window.addComment = function(id) { 
+        if(!canUserComment(currentUser)) { alert(T('commentRestricted')); return; }
+        let t = document.getElementById('newComm')?.value; 
+        if(t && t.trim()) { 
+            comments.push({ id: Date.now()+'', photoId: id, userId: currentUser.id, text: t.trim(), createdAt: Date.now() }); 
+            saveAll(); 
+            openFullscreen(id); 
+        } 
+    };
+    
+    window.closeFullscreen = function() { document.getElementById('fullscreenViewer').classList.remove('active'); };
+
+    // ========== АВТОРИЗАЦИЯ ==========
+    function showAuth() { 
+        document.getElementById('app').innerHTML = `<div style="max-width:400px; margin:60px auto; background:#0f141c; padding:30px; border-radius:20px; border:1px solid #2a3a4a; text-align:center;">
+            <h2><i class="fas fa-camera-retro"></i> ${T('siteName')}</h2>
+            <div class="lang-switch" style="justify-content:center; margin:20px 0;">${['ru','be','en'].map(l=>`<button class="lang-btn ${curLang===l?'active':''}" onclick="setLang('${l}')">${l.toUpperCase()}</button>`).join('')}</div>
+            <input id="loginEmail" placeholder="${T('email')}" style="width:100%; padding:12px; margin:10px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px; color:white;">
+            <input type="password" id="loginPassword" placeholder="${T('password')}" style="width:100%; padding:12px; margin:10px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px; color:white;">
+            <button onclick="doLogin()" style="width:100%; padding:12px;">${T('login')}</button>
+            <div style="margin-top:15px; cursor:pointer; color:#4a9eff;" onclick="showRegisterForm()">${T('register')}</div>
+        </div>`; 
+    }
+    
+    window.doLogin = function() { 
+        let u = users.find(u=>u.email===document.getElementById('loginEmail').value && u.password===document.getElementById('loginPassword').value); 
+        if(u) { 
+            currentUser = JSON.parse(JSON.stringify(u)); 
+            delete currentUser.password; 
+            localStorage.setItem('mss_session', JSON.stringify({ userId: u.id, expires: Date.now()+7*86400000 })); 
+            renderMainApp(); 
+        } else alert('Неверный email или пароль'); 
+    };
+    
+    window.showRegisterForm = function() { 
+        document.getElementById('app').innerHTML = `<div style="max-width:400px; margin:60px auto; background:#0f141c; padding:30px; border-radius:20px; border:1px solid #2a3a4a;">
+            <h2 style="text-align:center;">${T('register')}</h2>
+            <input id="regName" placeholder="${T('name')}" style="width:100%; padding:12px; margin:10px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px; color:white;">
+            <input id="regEmail" placeholder="${T('email')}" style="width:100%; padding:12px; margin:10px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px; color:white;">
+            <input type="password" id="regPassword" placeholder="${T('password')}" style="width:100%; padding:12px; margin:10px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px; color:white;">
+            <button onclick="doRegister()" style="width:100%; padding:12px;">${T('register')}</button>
+            <div style="margin-top:15px; text-align:center; cursor:pointer; color:#4a9eff;" onclick="showAuth()"><i class="fas fa-arrow-left"></i> ${T('login')}</div>
+        </div>`; 
+    };
+    
+    window.doRegister = function() { 
+        let n = document.getElementById('regName').value, e = document.getElementById('regEmail').value, p = document.getElementById('regPassword').value; 
+        if(!n||!e||p.length<4) { alert('Заполните все поля (пароль минимум 4 символа)'); return; } 
+        if(users.find(u=>u.email===e)) { alert('Email уже используется'); return; } 
+        let newUser = { id: Date.now()+'', name: n, email: e, password: p, role: 'user', bio: '', city: '', website: '', telegram: '', banVote: false, banComment: false }; 
+        users.push(newUser); 
+        saveAll(); 
+        alert('Регистрация успешна! Войдите.'); 
+        showAuth(); 
+    };
+    
+    window.logout = function() { localStorage.removeItem('mss_session'); currentUser = null; showAuth(); };
+
+    function renderMainApp() { 
+        if(!currentUser) { showAuth(); return; } 
+        updateNotifBadge(); 
+        document.getElementById('app').innerHTML = `<div class="header">
+            <div class="logo-area" onclick="renderHome()"><i class="fas fa-camera-retro logo"></i><span class="site-title">${T('siteName')}</span></div>
+            <div class="lang-switch">${['ru','be','en'].map(l=>`<button class="lang-btn ${curLang===l?'active':''}" onclick="setLang('${l}')">${l.toUpperCase()}</button>`).join('')}</div>
+            <div class="user-info"><span><i class="fas fa-user"></i> ${currentUser.name}</span>${currentUser.role==='admin'?'<span class="admin-badge"><i class="fas fa-shield-alt"></i> ADMIN</span>':''}${!canUserVote(currentUser) && currentUser.role !== 'admin' ? '<span class="banned-badge"><i class="fas fa-gavel"></i> Голосование заблокировано</span>' : ''}<button class="menu-btn" id="menuToggleBtn"><i class="fas fa-bars"></i><span id="notifBadge" class="notif-badge"></span></button></div>
+        </div>
+        <div class="side-menu" id="sideMenu"><div class="menu-header"><span>Меню</span><button id="closeMenuBtn" style="background:none;"><i class="fas fa-times"></i></button></div>
+        <ul class="menu-list">
+            <li onclick="showProfile()"><i class="fas fa-user"></i> ${T('profile')}</li>
+            <li onclick="showStatistics()"><i class="fas fa-chart-line"></i> ${T('statistics')}</li>
+            <li onclick="showUploadForm()"><i class="fas fa-upload"></i> ${T('upload')}</li>
+            <li onclick="showJournal()"><i class="fas fa-history"></i> ${T('journal')}</li>
+            <li onclick="showContest()"><i class="fas fa-trophy"></i> ${T('contest')}</li>
+            <li onclick="showMyPhotos()"><i class="fas fa-images"></i> ${T('myPhotos')}</li>
+            <li onclick="showNotifications()"><i class="fas fa-bell"></i> ${T('notifications')}</li>
+            ${currentUser.role==='admin'?'<li onclick="showAdminPanel()"><i class="fas fa-cogs"></i> '+T('adminPanel')+'</li>':''}
+            <li onclick="logout()"><i class="fas fa-sign-out-alt"></i> ${T('logout')}</li>
+        </ul></div>
+        <div class="container" id="mainContent"></div>
+        <div id="fullscreenViewer" class="fullscreen-viewer"></div>`; 
+        document.getElementById('menuToggleBtn').onclick = () => document.getElementById('sideMenu').classList.add('open'); 
+        document.getElementById('closeMenuBtn').onclick = () => document.getElementById('sideMenu').classList.remove('open'); 
+        renderHome(); 
+    }
+
+    initData();
+    if(currentUser) renderMainApp(); else showAuth();
+</script>
+</body>
+</html>
