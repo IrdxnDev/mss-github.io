@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Multi Spotting Site — транспортная галерея</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flag-icons@7.2.3/css/flag-icons.min.css">
@@ -110,16 +113,22 @@
         .profile-field { margin-bottom: 10px; padding: 8px; background: #0a0e17; border-radius: 8px; }
         .profile-label { color: #4a9eff; font-size: 0.75rem; margin-bottom: 4px; }
         .profile-value { word-break: break-word; }
+        .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; z-index: 10000; flex-direction: column; gap: 15px; }
+        .loading-spinner { width: 50px; height: 50px; border: 3px solid #2a3a4a; border-top-color: #4a9eff; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .toast { position: fixed; bottom: 25px; left: 25px; background: #2ecc71; color: #000; padding: 12px 24px; border-radius: 40px; z-index: 9999; animation: fadeOut 3s forwards; font-weight: 500; }
         @keyframes fadeOut { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
         @media (max-width: 768px) { .header { padding: 0.8rem 1rem; } .main-two-columns { flex-direction: column; } .photo-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app"><div class="loading-overlay"><div class="loading-spinner"></div><div>Загрузка данных...</div></div></div>
 
 <script>
-    // ========== ДАННЫЕ ==========
+    // ========== ВЕРСИЯ С INDEXEDDB - ФОТО СОХРАНЯЮТСЯ ==========
+    console.log('Multi Spotting Site v4.0 - IndexedDB с сохранением фото');
+    
+    let db = null;
     let currentUser = null;
     let allPhotos = [];
     let users = [];
@@ -127,7 +136,10 @@
     let comments = [];
     let notifications = [];
     let editRequests = [];
-    let vehiclesProfiles = {};
+    let vehiclesProfiles = [];
+    
+    const DB_NAME = 'MultiSpottingDB';
+    const DB_VERSION = 4;
     
     const VEHICLE_STATES = {
         oper: { ru: 'Эксплуатируется', icon: 'fa-play-circle', class: 'state-oper' },
@@ -140,35 +152,95 @@
     function getStateText(state) { return VEHICLE_STATES[state]?.ru || 'Неизвестно'; }
     function getStateClass(state) { return VEHICLE_STATES[state]?.class || 'state-unknown'; }
     function getStateIcon(state) { return VEHICLE_STATES[state]?.icon || 'fa-question'; }
-    
-    // Права доступа
     function canModerate(user) { return user && (user.role === 'admin' || user.role === 'moderator'); }
     function canEditUsers(user) { return user && user.role === 'admin'; }
+    function escapeHtml(str) { return String(str || '').replace(/[&<>]/g, function(m){ return m==='&'?'&amp;':m==='<'?'&lt;':'&gt;';}); }
     
-    function initData() {
-        users = [
-            { id: 'admin1', name: 'Администратор', email: 'admin@multispotting.com', password: 'admin123', role: 'admin', banVote: false, banComment: false, bio: 'Главный администратор сайта', city: 'Москва', website: 'https://multispotting.com', telegram: '@multispotting', createdAt: Date.now() },
-            { id: 'moder1', name: 'Фотомодератор', email: 'moder@multispotting.com', password: 'moder123', role: 'moderator', banVote: false, banComment: false, bio: 'Проверяю и редактирую фото', city: 'Санкт-Петербург', website: '', telegram: '@moder', createdAt: Date.now() },
-            { id: 'demo1', name: 'Демо Пользователь', email: 'demo@mail.ru', password: 'demo123', role: 'user', banVote: false, banComment: false, bio: 'Люблю фотографировать технику и делиться снимками', city: 'Минск', website: '', telegram: '@demo', createdAt: Date.now() }
-        ];
+    // ========== INDEXEDDB ФУНКЦИИ ==========
+    function initDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                db = request.result;
+                resolve();
+            };
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('users')) db.createObjectStore('users', { keyPath: 'id' });
+                if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'id' });
+                if (!db.objectStoreNames.contains('votes')) db.createObjectStore('votes', { keyPath: 'id' });
+                if (!db.objectStoreNames.contains('comments')) db.createObjectStore('comments', { keyPath: 'id' });
+                if (!db.objectStoreNames.contains('notifications')) db.createObjectStore('notifications', { keyPath: 'id' });
+                if (!db.objectStoreNames.contains('editRequests')) db.createObjectStore('editRequests', { keyPath: 'id' });
+                if (!db.objectStoreNames.contains('vehiclesProfiles')) db.createObjectStore('vehiclesProfiles', { keyPath: 'vehicle' });
+            };
+        });
+    }
+    
+    async function getAllFromStore(storeName) {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readonly');
+            const request = tx.objectStore(storeName).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    async function putToStore(storeName, item) {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readwrite');
+            const request = tx.objectStore(storeName).put(item);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    async function deleteFromStore(storeName, id) {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readwrite');
+            const request = tx.objectStore(storeName).delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    async function loadAllData() {
+        users = await getAllFromStore('users');
+        allPhotos = await getAllFromStore('photos');
+        votes = await getAllFromStore('votes');
+        comments = await getAllFromStore('comments');
+        notifications = await getAllFromStore('notifications');
+        editRequests = await getAllFromStore('editRequests');
+        const vp = await getAllFromStore('vehiclesProfiles');
+        vehiclesProfiles = {};
+        vp.forEach(p => vehiclesProfiles[p.vehicle] = p);
         
-        allPhotos = [
-            { id: 'p1', userId: 'admin1', url: 'https://picsum.photos/id/111/800/600', thumb: 'https://picsum.photos/id/111/300/200', vehicle: 'BMW M3 E46', loc: { country: 'Германия', city: 'Мюнхен', street: 'BMW Strasse' }, status: 'approved', rating: 25, likes: 18, dislikes: 2, views: 45, createdAt: Date.now() - 3600000, moderationNote: '' },
-            { id: 'p2', userId: 'demo1', url: 'https://picsum.photos/id/222/800/600', thumb: 'https://picsum.photos/id/222/300/200', vehicle: 'Mercedes Actros', loc: { country: 'Германия', city: 'Берлин', street: '' }, status: 'approved', rating: 20, likes: 15, dislikes: 1, views: 32, createdAt: Date.now() - 86400000, moderationNote: '' },
-            { id: 'p3', userId: 'admin1', url: 'https://picsum.photos/id/333/800/600', thumb: 'https://picsum.photos/id/333/300/200', vehicle: 'Porsche 911 GT3', loc: { country: 'Германия', city: 'Штутгарт', street: '' }, status: 'approved', rating: 28, likes: 20, dislikes: 1, views: 67, createdAt: Date.now() - 172800000, moderationNote: '' },
-            { id: 'p4', userId: 'demo1', url: 'https://picsum.photos/id/444/800/600', thumb: 'https://picsum.photos/id/444/300/200', vehicle: 'Volvo FH16', loc: { country: 'Швеция', city: 'Гётеборг', street: '' }, status: 'pending', rating: 0, likes: 0, dislikes: 0, views: 0, createdAt: Date.now(), moderationNote: '' }
-        ];
-        
-        votes = [];
-        comments = [{ id: 'c1', photoId: 'p1', userId: 'demo1', text: 'Отличный снимок!', createdAt: Date.now() - 100000 }];
-        notifications = [];
-        editRequests = [];
-        
-        vehiclesProfiles = {
-            'BMW M3 E46': { vehicle: 'BMW M3 E46', model: 'BMW M3 E46', year: 2003, engine: '3.2 л S54', state: 'oper', purpose: 'Спорт-купе' },
-            'Mercedes Actros': { vehicle: 'Mercedes Actros', model: 'Actros MP4', year: 2018, engine: '12.8 л OM471', state: 'oper', purpose: 'Магистральный тягач' },
-            'Porsche 911 GT3': { vehicle: 'Porsche 911 GT3', model: '911 GT3', year: 2022, engine: '4.0 л', state: 'oper', purpose: 'Спорткар' }
-        };
+        if (users.length === 0) {
+            const admin = { id: 'admin1', name: 'Администратор', email: 'admin@multispotting.com', password: 'admin123', role: 'admin', banVote: false, banComment: false, bio: 'Главный администратор', city: 'Москва', website: '', telegram: '', createdAt: Date.now() };
+            const moder = { id: 'moder1', name: 'Фотомодератор', email: 'moder@multispotting.com', password: 'moder123', role: 'moderator', banVote: false, banComment: false, bio: 'Проверяю и редактирую фото', city: 'Санкт-Петербург', website: '', telegram: '', createdAt: Date.now() };
+            const demo = { id: 'demo1', name: 'Демо Пользователь', email: 'demo@mail.ru', password: 'demo123', role: 'user', banVote: false, banComment: false, bio: 'Люблю фотографировать технику', city: 'Минск', website: '', telegram: '', createdAt: Date.now() };
+            await putToStore('users', admin);
+            await putToStore('users', moder);
+            await putToStore('users', demo);
+            users = [admin, moder, demo];
+            
+            const photos = [
+                { id: 'p1', userId: 'admin1', url: 'https://picsum.photos/id/111/800/600', thumb: 'https://picsum.photos/id/111/300/200', vehicle: 'BMW M3 E46', loc: { country: 'Германия', city: 'Мюнхен', street: 'BMW Strasse' }, status: 'approved', rating: 25, likes: 18, dislikes: 2, views: 45, createdAt: Date.now() - 3600000, moderationNote: '' },
+                { id: 'p2', userId: 'demo1', url: 'https://picsum.photos/id/222/800/600', thumb: 'https://picsum.photos/id/222/300/200', vehicle: 'Mercedes Actros', loc: { country: 'Германия', city: 'Берлин', street: '' }, status: 'approved', rating: 20, likes: 15, dislikes: 1, views: 32, createdAt: Date.now() - 86400000, moderationNote: '' },
+                { id: 'p3', userId: 'admin1', url: 'https://picsum.photos/id/333/800/600', thumb: 'https://picsum.photos/id/333/300/200', vehicle: 'Porsche 911 GT3', loc: { country: 'Германия', city: 'Штутгарт', street: '' }, status: 'approved', rating: 28, likes: 20, dislikes: 1, views: 67, createdAt: Date.now() - 172800000, moderationNote: '' },
+                { id: 'p4', userId: 'demo1', url: 'https://picsum.photos/id/444/800/600', thumb: 'https://picsum.photos/id/444/300/200', vehicle: 'Volvo FH16', loc: { country: 'Швеция', city: 'Гётеборг', street: '' }, status: 'pending', rating: 0, likes: 0, dislikes: 0, views: 0, createdAt: Date.now(), moderationNote: '' }
+            ];
+            for (const p of photos) await putToStore('photos', p);
+            allPhotos = photos;
+            
+            const profiles = {
+                'BMW M3 E46': { vehicle: 'BMW M3 E46', model: 'BMW M3 E46', year: 2003, engine: '3.2 л S54', state: 'oper', purpose: 'Спорт-купе' },
+                'Mercedes Actros': { vehicle: 'Mercedes Actros', model: 'Actros MP4', year: 2018, engine: '12.8 л OM471', state: 'oper', purpose: 'Магистральный тягач' },
+                'Porsche 911 GT3': { vehicle: 'Porsche 911 GT3', model: '911 GT3', year: 2022, engine: '4.0 л', state: 'oper', purpose: 'Спорткар' }
+            };
+            for (const [k, v] of Object.entries(profiles)) { await putToStore('vehiclesProfiles', v); vehiclesProfiles[k] = v; }
+        }
         
         let saved = localStorage.getItem('mss_user');
         if (saved) {
@@ -181,18 +253,23 @@
                 }
             } catch(e) {}
         }
-        if (!currentUser) {
-            let admin = users.find(u => u.role === 'admin');
-            currentUser = JSON.parse(JSON.stringify(admin));
+        if (!currentUser && users.length) {
+            currentUser = JSON.parse(JSON.stringify(users.find(u => u.role === 'admin')));
             delete currentUser.password;
         }
     }
     
     function saveSession() { if (currentUser) localStorage.setItem('mss_user', JSON.stringify({ id: currentUser.id, name: currentUser.name })); }
     function showToast(msg) { let t = document.createElement('div'); t.className = 'toast'; t.innerHTML = '<i class="fas fa-check-circle"></i> ' + msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3000); }
-    function addNotification(userId, title, message) { let notif = { id: Date.now() + '_' + Math.random().toString(36).substr(2, 6), userId, title, message, read: false, createdAt: Date.now() }; notifications.push(notif); if (currentUser && currentUser.id === userId) { updateNotifBadge(); showToast(message); } }
+    
+    async function addNotification(userId, title, message) {
+        let notif = { id: Date.now() + '_' + Math.random().toString(36).substr(2, 6), userId, title, message, read: false, createdAt: Date.now() };
+        await putToStore('notifications', notif);
+        notifications.push(notif);
+        if (currentUser && currentUser.id === userId) { updateNotifBadge(); showToast(message); }
+    }
+    
     function updateNotifBadge() { let badge = document.getElementById('notifBadge'); if (badge && currentUser) { let count = notifications.filter(n => n.userId === currentUser.id && !n.read).length; badge.textContent = count || ''; } }
-    function escapeHtml(str) { return String(str || '').replace(/[&<>]/g, function(m){ return m==='&'?'&amp;':m==='<'?'&lt;':'&gt;';}); }
     function getBadgeClass(status) { return status === 'approved' ? 'badge-approved' : status === 'conditional' ? 'badge-conditional' : status === 'rejected' ? 'badge-rejected' : 'badge-pending'; }
     function getStatusText(status) { return status === 'approved' ? 'Одобрено' : status === 'conditional' ? 'Условно' : status === 'rejected' ? 'Отклонено' : 'Модерация'; }
     function formatLoc(loc) { return [loc.country, loc.city, loc.street].filter(Boolean).join(', ') || '—'; }
@@ -201,22 +278,22 @@
     function canUserVote(user) { return user.role === 'admin' ? true : !user.banVote; }
     function canUserComment(user) { return user.role === 'admin' ? true : !user.banComment; }
     
-    // ========== РЕДАКТИРОВАНИЕ ПРОФИЛЯ ==========
-    function editProfile() {
+    // ========== ПРОФИЛЬ ==========
+    async function editProfile() {
         let user = users.find(u => u.id === currentUser.id);
         let modal = document.createElement('div'); modal.className = 'edit-modal';
         modal.innerHTML = `<div><h3><i class="fas fa-user-edit"></i> Редактирование профиля</h3>
-            <div class="form-group"><label>Имя пользователя (ник)</label><input id="editName" value="${escapeHtml(user.name)}"></div>
-            <div class="form-group"><label>О себе</label><textarea id="editBio" rows="3" placeholder="Расскажите о себе...">${escapeHtml(user.bio || '')}</textarea></div>
-            <div class="form-group"><label>Город</label><input id="editCity" value="${escapeHtml(user.city || '')}" placeholder="Ваш город"></div>
-            <div class="form-group"><label>Веб-сайт</label><input id="editWebsite" value="${escapeHtml(user.website || '')}" placeholder="https://..."></div>
-            <div class="form-group"><label>Telegram</label><input id="editTelegram" value="${escapeHtml(user.telegram || '')}" placeholder="@username"></div>
+            <div class="form-group"><label>Имя пользователя</label><input id="editName" value="${escapeHtml(user.name)}"></div>
+            <div class="form-group"><label>О себе</label><textarea id="editBio" rows="3">${escapeHtml(user.bio || '')}</textarea></div>
+            <div class="form-group"><label>Город</label><input id="editCity" value="${escapeHtml(user.city || '')}"></div>
+            <div class="form-group"><label>Веб-сайт</label><input id="editWebsite" value="${escapeHtml(user.website || '')}"></div>
+            <div class="form-group"><label>Telegram</label><input id="editTelegram" value="${escapeHtml(user.telegram || '')}"></div>
             <div style="display:flex; gap:12px; justify-content:flex-end;"><button class="btn btn-success" onclick="saveProfileEdit()">Сохранить</button><button class="btn" onclick="this.closest('.edit-modal').remove()">Отмена</button></div>
         </div>`;
         document.body.appendChild(modal);
     }
     
-    function saveProfileEdit() {
+    async function saveProfileEdit() {
         let user = users.find(u => u.id === currentUser.id);
         if (user) {
             let newName = document.getElementById('editName').value.trim();
@@ -226,6 +303,7 @@
             user.city = document.getElementById('editCity').value;
             user.website = document.getElementById('editWebsite').value;
             user.telegram = document.getElementById('editTelegram').value;
+            await putToStore('users', user);
             currentUser.name = newName;
             currentUser.bio = user.bio;
             currentUser.city = user.city;
@@ -238,27 +316,29 @@
         }
     }
     
-    function toggleBanVote(userId) {
+    async function toggleBanVote(userId) {
         let user = users.find(u => u.id === userId);
         if (user && canEditUsers(currentUser) && user.id !== currentUser.id) {
             user.banVote = !user.banVote;
+            await putToStore('users', user);
             showToast(`Голосование ${user.banVote ? 'запрещено' : 'разрешено'} для ${user.name}`);
             if (window.currentView === 'profile') showUserProfile(userId);
             if (window.currentView === 'admin') showAdminPanel();
         }
     }
     
-    function toggleBanComment(userId) {
+    async function toggleBanComment(userId) {
         let user = users.find(u => u.id === userId);
         if (user && canEditUsers(currentUser) && user.id !== currentUser.id) {
             user.banComment = !user.banComment;
+            await putToStore('users', user);
             showToast(`Комментирование ${user.banComment ? 'запрещено' : 'разрешено'} для ${user.name}`);
             if (window.currentView === 'profile') showUserProfile(userId);
             if (window.currentView === 'admin') showAdminPanel();
         }
     }
     
-    function quickVote(photoId, val) {
+    async function quickVote(photoId, val) {
         if (!currentUser) { alert('Войдите чтобы голосовать'); return; }
         if (!canUserVote(currentUser)) { alert('Голосование запрещено администратором'); return; }
         let photo = allPhotos.find(p => p.id === photoId);
@@ -271,29 +351,77 @@
             else { photo.dislikes++; if (existing.value === 1) photo.likes--; }
             photo.rating += (val - existing.value);
             existing.value = val;
+            await putToStore('votes', existing);
         } else {
             if (val === 1) photo.likes++;
             else photo.dislikes++;
             photo.rating += val;
-            votes.push({ id: Date.now() + '_' + Math.random(), photoId, userId: currentUser.id, value: val });
+            const newVote = { id: Date.now() + '_' + Math.random().toString(36).substr(2, 6), photoId, userId: currentUser.id, value: val };
+            await putToStore('votes', newVote);
+            votes.push(newVote);
         }
+        await putToStore('photos', photo);
         refreshCurrentView();
     }
     
-    function moderatePhoto(id, status, note) {
+    async function moderatePhoto(id, status, note) {
         let photo = allPhotos.find(p => p.id === id);
         if (photo && canModerate(currentUser)) {
             photo.status = status;
             photo.moderationNote = note || '';
+            await putToStore('photos', photo);
             let msg = status === 'approved' ? `Ваше фото "${photo.vehicle}" одобрено!` : (status === 'conditional' ? `Ваше фото "${photo.vehicle}" принято условно. Замечание: ${note || 'нет'}` : `Ваше фото "${photo.vehicle}" отклонено. Причина: ${note || 'не указана'}`);
-            addNotification(photo.userId, status === 'approved' ? 'Фото одобрено' : (status === 'conditional' ? 'Фото принято условно' : 'Фото отклонено'), msg);
+            await addNotification(photo.userId, status === 'approved' ? 'Фото одобрено' : (status === 'conditional' ? 'Фото принято условно' : 'Фото отклонено'), msg);
             showToast(`Фото ${status === 'approved' ? 'одобрено' : (status === 'conditional' ? 'принято условно' : 'отклонено')}`);
             if (window.currentView === 'admin') showAdminPanel();
             refreshCurrentView();
         }
     }
     
-    function editVehicleProfile(vehicleName) {
+    async function editPhoto(photoId) {
+        if (!canModerate(currentUser)) return;
+        let photo = allPhotos.find(p => p.id === photoId);
+        if (!photo) return;
+        let modal = document.createElement('div'); modal.className = 'edit-modal';
+        modal.innerHTML = `<div><h3>Редактировать фото</h3><div class="form-group"><label>Транспорт</label><input id="editVeh" value="${escapeHtml(photo.vehicle)}"></div><div class="form-group"><label>Страна</label><input id="editCountry" value="${escapeHtml(photo.loc.country || '')}"></div><div class="form-group"><label>Город</label><input id="editCity" value="${escapeHtml(photo.loc.city || '')}"></div><div class="form-group"><label>Улица</label><input id="editStreet" value="${escapeHtml(photo.loc.street || '')}"></div><button class="btn btn-success" onclick="savePhotoEdit('${photoId}')">Сохранить</button><button class="btn" onclick="this.closest('.edit-modal').remove()">Отмена</button></div>`;
+        document.body.appendChild(modal);
+    }
+    
+    async function savePhotoEdit(photoId) {
+        let photo = allPhotos.find(p => p.id === photoId);
+        if (photo && canModerate(currentUser)) {
+            photo.vehicle = document.getElementById('editVeh').value.trim();
+            photo.loc.country = document.getElementById('editCountry').value;
+            photo.loc.city = document.getElementById('editCity').value;
+            photo.loc.street = document.getElementById('editStreet').value;
+            if (!vehiclesProfiles[photo.vehicle]) {
+                vehiclesProfiles[photo.vehicle] = { vehicle: photo.vehicle, model: photo.vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
+                await putToStore('vehiclesProfiles', vehiclesProfiles[photo.vehicle]);
+            }
+            await putToStore('photos', photo);
+            showToast('Фото обновлено');
+            document.querySelector('.edit-modal')?.remove();
+            refreshCurrentView();
+        }
+    }
+    
+    async function deletePhoto(photoId) {
+        if (!canModerate(currentUser)) return;
+        if (confirm('Удалить это фото?')) {
+            await deleteFromStore('photos', photoId);
+            allPhotos = allPhotos.filter(p => p.id !== photoId);
+            const toDelVotes = votes.filter(v => v.photoId === photoId);
+            for (const v of toDelVotes) await deleteFromStore('votes', v.id);
+            votes = votes.filter(v => v.photoId !== photoId);
+            const toDelComments = comments.filter(c => c.photoId === photoId);
+            for (const c of toDelComments) await deleteFromStore('comments', c.id);
+            comments = comments.filter(c => c.photoId !== photoId);
+            showToast('Фото удалено');
+            refreshCurrentView();
+        }
+    }
+    
+    async function editVehicleProfile(vehicleName) {
         if (!canEditUsers(currentUser)) return;
         let profile = vehiclesProfiles[vehicleName] || {};
         let stateOptions = Object.keys(VEHICLE_STATES).map(s => `<option value="${s}" ${profile.state===s?'selected':''}>${getStateText(s)}</option>`).join('');
@@ -303,25 +431,30 @@
             <div class="form-group"><label>Год выпуска</label><input id="editYear" value="${profile.year || ''}"></div>
             <div class="form-group"><label>Двигатель</label><input id="editEngine" value="${profile.engine || ''}"></div>
             <div class="form-group"><label>Состояние</label><select id="editState">${stateOptions}</select></div>
-            <div class="form-group"><label>Назначение</label><textarea id="editPurpose" rows="3">${profile.purpose || ''}</textarea></div>
+            <div class="form-group"><label>Назначение</label><textarea id="editPurpose">${profile.purpose || ''}</textarea></div>
             <div style="display:flex; gap:12px; justify-content:flex-end;"><button class="btn btn-success" onclick="saveVehicleProfile('${escapeHtml(vehicleName)}')">Сохранить</button><button class="btn" onclick="this.closest('.edit-modal').remove()">Отмена</button></div>
         </div>`;
         document.body.appendChild(modal);
     }
     
-    function saveVehicleProfile(vehicleName) {
+    async function saveVehicleProfile(vehicleName) {
         let newModel = document.getElementById('editModel').value.trim();
         if (!newModel) { alert('Введите название модели'); return; }
         let profile = { vehicle: newModel, model: newModel, year: document.getElementById('editYear').value, engine: document.getElementById('editEngine').value, state: document.getElementById('editState').value, purpose: document.getElementById('editPurpose').value };
-        if (newModel !== vehicleName) { delete vehiclesProfiles[vehicleName]; allPhotos.forEach(p => { if (p.vehicle === vehicleName) p.vehicle = newModel; }); }
+        if (newModel !== vehicleName) {
+            delete vehiclesProfiles[vehicleName];
+            await deleteFromStore('vehiclesProfiles', vehicleName);
+            for (let p of allPhotos) { if (p.vehicle === vehicleName) { p.vehicle = newModel; await putToStore('photos', p); } }
+        }
         vehiclesProfiles[newModel] = profile;
+        await putToStore('vehiclesProfiles', profile);
         document.querySelector('.edit-modal')?.remove();
         showToast('Профиль ТС обновлён');
         showVehiclePage(newModel);
         refreshCurrentView();
     }
     
-    function requestVehicleEdit(vehicleName) {
+    async function requestVehicleEdit(vehicleName) {
         let profile = vehiclesProfiles[vehicleName] || {};
         let stateOptions = Object.keys(VEHICLE_STATES).map(s => `<option value="${s}" ${profile.state===s?'selected':''}>${getStateText(s)}</option>`).join('');
         let modal = document.createElement('div'); modal.className = 'edit-modal';
@@ -337,50 +470,38 @@
         document.body.appendChild(modal);
     }
     
-    function submitEditRequest(vehicleName) {
+    async function submitEditRequest(vehicleName) {
         let request = { id: Date.now() + '_' + Math.random().toString(36).substr(2, 6), vehicleName, userId: currentUser.id, userName: currentUser.name, changes: { model: document.getElementById('reqModel').value, year: document.getElementById('reqYear').value, engine: document.getElementById('reqEngine').value, state: document.getElementById('reqState').value, purpose: document.getElementById('reqPurpose').value }, reason: document.getElementById('reqReason').value, status: 'pending', createdAt: Date.now() };
+        await putToStore('editRequests', request);
         editRequests.push(request);
-        let admin = users.find(u => u.role === 'admin');
-        if (admin) addNotification(admin.id, 'Новая заявка', `Пользователь ${currentUser.name} предлагает изменения для ТС "${vehicleName}"`);
+        let admins = users.filter(u => u.role === 'admin');
+        for (let admin of admins) await addNotification(admin.id, 'Новая заявка', `Пользователь ${currentUser.name} предлагает изменения для ТС "${vehicleName}"`);
         document.querySelector('.edit-modal')?.remove();
         showToast('Заявка отправлена');
         showVehiclePage(vehicleName);
     }
     
-    function approveEditRequest(requestId) { let req = editRequests.find(r => r.id == requestId); if (req && canEditUsers(currentUser)) { vehiclesProfiles[req.vehicleName] = { vehicle: req.vehicleName, ...req.changes }; req.status = 'approved'; addNotification(req.userId, 'Заявка одобрена', `Ваше предложение по ТС "${req.vehicleName}" принято`); showToast('Заявка одобрена'); showAdminPanel(); } }
-    function rejectEditRequest(requestId) { let req = editRequests.find(r => r.id == requestId); if (req && canEditUsers(currentUser)) { req.status = 'rejected'; addNotification(req.userId, 'Заявка отклонена', `Ваше предложение по ТС "${req.vehicleName}" отклонено`); showToast('Заявка отклонена'); showAdminPanel(); } }
-    
-    function editPhoto(photoId) {
-        if (!canModerate(currentUser)) return;
-        let photo = allPhotos.find(p => p.id === photoId);
-        if (!photo) return;
-        let modal = document.createElement('div'); modal.className = 'edit-modal';
-        modal.innerHTML = `<div><h3>Редактировать фото</h3><div class="form-group"><label>Транспорт</label><input id="editVeh" value="${escapeHtml(photo.vehicle)}"></div><div class="form-group"><label>Страна</label><input id="editCountry" value="${escapeHtml(photo.loc.country || '')}"></div><div class="form-group"><label>Город</label><input id="editCity" value="${escapeHtml(photo.loc.city || '')}"></div><div class="form-group"><label>Улица</label><input id="editStreet" value="${escapeHtml(photo.loc.street || '')}"></div><button class="btn btn-success" onclick="savePhotoEdit('${photoId}')">Сохранить</button><button class="btn" onclick="this.closest('.edit-modal').remove()">Отмена</button></div>`;
-        document.body.appendChild(modal);
-    }
-    
-    function savePhotoEdit(photoId) {
-        let photo = allPhotos.find(p => p.id === photoId);
-        if (photo && canModerate(currentUser)) {
-            photo.vehicle = document.getElementById('editVeh').value.trim();
-            photo.loc.country = document.getElementById('editCountry').value;
-            photo.loc.city = document.getElementById('editCity').value;
-            photo.loc.street = document.getElementById('editStreet').value;
-            if (!vehiclesProfiles[photo.vehicle]) vehiclesProfiles[photo.vehicle] = { vehicle: photo.vehicle, model: photo.vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
-            showToast('Фото обновлено');
-            document.querySelector('.edit-modal')?.remove();
-            refreshCurrentView();
+    async function approveEditRequest(requestId) {
+        let req = editRequests.find(r => r.id == requestId);
+        if (req && canEditUsers(currentUser)) {
+            vehiclesProfiles[req.vehicleName] = { vehicle: req.vehicleName, ...req.changes };
+            await putToStore('vehiclesProfiles', vehiclesProfiles[req.vehicleName]);
+            req.status = 'approved';
+            await putToStore('editRequests', req);
+            await addNotification(req.userId, 'Заявка одобрена', `Ваше предложение по ТС "${req.vehicleName}" принято`);
+            showToast('Заявка одобрена');
+            showAdminPanel();
         }
     }
     
-    function deletePhoto(photoId) {
-        if (!canModerate(currentUser)) return;
-        if (confirm('Удалить это фото?')) {
-            allPhotos = allPhotos.filter(p => p.id !== photoId);
-            votes = votes.filter(v => v.photoId !== photoId);
-            comments = comments.filter(c => c.photoId !== photoId);
-            showToast('Фото удалено');
-            refreshCurrentView();
+    async function rejectEditRequest(requestId) {
+        let req = editRequests.find(r => r.id == requestId);
+        if (req && canEditUsers(currentUser)) {
+            req.status = 'rejected';
+            await putToStore('editRequests', req);
+            await addNotification(req.userId, 'Заявка отклонена', `Ваше предложение по ТС "${req.vehicleName}" отклонено`);
+            showToast('Заявка отклонена');
+            showAdminPanel();
         }
     }
     
@@ -446,10 +567,11 @@
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-trophy"></i> Конкурс лучших фото</h2><p style="margin-bottom: 20px;">Топ-6 фотографий по рейтингу! Голосуйте за лучшие работы.</p><div class="photo-grid">${topPhotos.map(p => photoCard(p)).join('') || '<div>Нет фото</div>'}</div><button class="btn" onclick="renderHome()">На главную</button></div>`;
     }
     
-    function showNotifications() {
+    async function showNotifications() {
         window.currentView = 'notifications';
         let myNotifs = notifications.filter(n => n.userId === currentUser.id).reverse();
-        myNotifs.forEach(n => n.read = true);
+        for (let n of myNotifs) { if (!n.read) { n.read = true; await putToStore('notifications', n); } }
+        notifications = notifications.map(n => n.userId === currentUser.id ? { ...n, read: true } : n);
         updateNotifBadge();
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-bell"></i> Уведомления</h2>${myNotifs.length ? myNotifs.map(n => `<div class="user-card"><strong>${n.title}</strong><br>${n.message}<br><small>${new Date(n.createdAt).toLocaleString()}</small></div>`).join('') : '<p>Нет уведомлений</p>'}<button class="btn" onclick="renderHome()">На главную</button></div>`;
     }
@@ -532,20 +654,67 @@
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-cloud-upload-alt"></i> Загрузка фото</h2><div class="form-group"><label>Файл</label><input type="file" id="uploadFile" accept="image/jpeg,image/png,image/webp"></div><div class="form-group"><label>Транспорт</label><input id="uploadVehicle" placeholder="Например: BMW X5"></div><div class="form-group"><label>Страна</label><input id="uploadCountry" placeholder="Страна"></div><div class="form-group"><label>Город</label><input id="uploadCity" placeholder="Город"></div><div class="form-group"><label>Улица</label><input id="uploadStreet" placeholder="Улица"></div><button class="btn btn-success" onclick="doUpload()">Отправить на модерацию</button></div>`;
     }
     
-    function doUpload() {
+    async function doUpload() {
         let file = document.getElementById('uploadFile').files[0];
         if (!file) { alert('Выберите файл'); return; }
         let vehicle = document.getElementById('uploadVehicle').value.trim();
         if (!vehicle) { alert('Введите название транспорта'); return; }
-        let reader = new FileReader();
-        reader.onload = function(e) {
-            let newPhoto = { id: 'p' + Date.now() + '_' + Math.random().toString(36).substr(2, 6), userId: currentUser.id, url: e.target.result, thumb: e.target.result, vehicle, loc: { country: document.getElementById('uploadCountry').value, city: document.getElementById('uploadCity').value, street: document.getElementById('uploadStreet').value }, status: 'pending', rating: 0, likes: 0, dislikes: 0, views: 0, createdAt: Date.now(), moderationNote: '' };
-            allPhotos.push(newPhoto);
-            if (!vehiclesProfiles[vehicle]) vehiclesProfiles[vehicle] = { vehicle, model: vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
-            let admins = users.filter(u => u.role === 'admin' || u.role === 'moderator');
-            admins.forEach(admin => addNotification(admin.id, 'Новое фото', `Пользователь ${currentUser.name} загрузил фото: ${vehicle}`));
-            showToast('Фото отправлено на модерацию');
-            renderHome();
+        
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Загрузка...';
+        
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            try {
+                const newPhoto = {
+                    id: 'p' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                    userId: currentUser.id,
+                    url: e.target.result,
+                    thumb: e.target.result,
+                    vehicle: vehicle,
+                    loc: {
+                        country: document.getElementById('uploadCountry').value,
+                        city: document.getElementById('uploadCity').value,
+                        street: document.getElementById('uploadStreet').value,
+                        lat: 0, lng: 0
+                    },
+                    status: 'pending',
+                    rating: 0, likes: 0, dislikes: 0, views: 0,
+                    createdAt: Date.now(),
+                    moderationNote: ''
+                };
+                await putToStore('photos', newPhoto);
+                allPhotos.push(newPhoto);
+                
+                if (!vehiclesProfiles[vehicle]) {
+                    vehiclesProfiles[vehicle] = { vehicle: vehicle, model: vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
+                    await putToStore('vehiclesProfiles', vehiclesProfiles[vehicle]);
+                }
+                
+                let moderators = users.filter(u => u.role === 'admin' || u.role === 'moderator');
+                for (let mod of moderators) {
+                    await addNotification(mod.id, 'Новое фото', `Пользователь ${currentUser.name} загрузил фото: ${vehicle}`);
+                }
+                
+                showToast('Фото отправлено на модерацию');
+                document.getElementById('uploadFile').value = '';
+                document.getElementById('uploadVehicle').value = '';
+                document.getElementById('uploadCountry').value = '';
+                document.getElementById('uploadCity').value = '';
+                document.getElementById('uploadStreet').value = '';
+                renderHome();
+            } catch(err) {
+                alert('Ошибка при загрузке: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Отправить на модерацию';
+            }
+        };
+        reader.onerror = function() {
+            alert('Ошибка чтения файла');
+            btn.disabled = false;
+            btn.innerHTML = 'Отправить на модерацию';
         };
         reader.readAsDataURL(file);
     }
@@ -555,9 +724,9 @@
     function showStatistics() { let approved = allPhotos.filter(p => p.status === 'approved'); document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-chart-pie"></i> Статистика</h2><div class="admin-stats"><div class="stat-card"><div class="stat-number">${approved.length}</div><div>Одобрено</div></div><div class="stat-card"><div class="stat-number">${allPhotos.filter(p=>p.status==='pending').length}</div><div>На модерации</div></div><div class="stat-card"><div class="stat-number">${users.length}</div><div>Пользователей</div></div></div><button class="btn" onclick="renderHome()">На главную</button></div>`; }
     
     function showSwitchUserPanel() { document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-exchange-alt"></i> Сменить пользователя</h2><div style="display:flex; flex-direction:column; gap:10px;">${users.map(u => `<div class="user-card" style="cursor:pointer;" onclick="switchToUser('${u.id}')"><i class="fas fa-user-circle"></i> <strong>${u.name}</strong> (${u.email}) - ${u.role === 'admin' ? 'Админ' : (u.role === 'moderator' ? 'Модератор' : 'Пользователь')}</div>`).join('')}</div><button class="btn" onclick="renderHome()">На главную</button></div>`; }
-    function switchToUser(userId) { let user = users.find(u => u.id === userId); if (user) { currentUser = JSON.parse(JSON.stringify(user)); delete currentUser.password; saveSession(); showToast(`Переключено на ${user.name}`); renderMainApp(); } }
+    async function switchToUser(userId) { let user = users.find(u => u.id === userId); if (user) { currentUser = JSON.parse(JSON.stringify(user)); delete currentUser.password; saveSession(); showToast(`Переключено на ${user.name}`); renderMainApp(); } }
     
-    function showAdminPanel() {
+    async function showAdminPanel() {
         if (!canModerate(currentUser)) return;
         window.currentView = 'admin';
         let pending = allPhotos.filter(p => p.status === 'pending');
@@ -578,20 +747,24 @@
         switchAdminTab('moderation');
     }
     
-    function changeUserRole(userId, newRole) { 
+    async function changeUserRole(userId, newRole) { 
         let user = users.find(u => u.id === userId);
         if (user && canEditUsers(currentUser) && user.id !== currentUser.id) {
             user.role = newRole;
+            await putToStore('users', user);
             showToast(`Роль изменена на ${newRole === 'admin' ? 'Администратор' : (newRole === 'moderator' ? 'Модератор' : 'Пользователь')}`);
             showAdminPanel();
         }
     }
     
-    function deleteUser(userId) { 
+    async function deleteUser(userId) { 
         if (!canEditUsers(currentUser)) return;
         if (userId === currentUser.id) { alert('Нельзя удалить себя'); return; }
         if (confirm('Удалить пользователя и все его фото?')) {
+            await deleteFromStore('users', userId);
             users = users.filter(u => u.id !== userId);
+            const userPhotos = allPhotos.filter(p => p.userId === userId);
+            for (const p of userPhotos) await deleteFromStore('photos', p.id);
             allPhotos = allPhotos.filter(p => p.userId !== userId);
             votes = votes.filter(v => v.userId !== userId);
             comments = comments.filter(c => c.userId !== userId);
@@ -602,26 +775,37 @@
         }
     }
     
-    function openFullscreen(id) {
+    async function openFullscreen(id) {
         let photo = allPhotos.find(p => p.id === id);
         if (!photo) return;
         photo.views = (photo.views || 0) + 1;
+        await putToStore('photos', photo);
         let photoComments = comments.filter(c => c.photoId === id);
         let canComment = currentUser && canUserComment(currentUser);
         let viewer = document.getElementById('fullscreenViewer');
         viewer.innerHTML = `<button class="fullscreen-close" onclick="closeFullscreen()"><i class="fas fa-times"></i></button><div class="fullscreen-image"><img src="${photo.url}"></div><div class="fullscreen-info"><h3>${photo.vehicle}</h3><div>${getFlag(photo.loc.country)} ${formatLoc(photo.loc)}</div><div>Просмотров: ${photo.views}</div><h4>Комментарии</h4><div id="fsComments">${photoComments.map(c => `<div class="comment"><strong>${users.find(u=>u.id===c.userId)?.name}</strong>: ${c.text}</div>`).join('')}</div>${currentUser ? (canComment ? `<div style="display:flex; gap:12px; margin-top:18px;"><input id="fsCommentInput" placeholder="Написать комментарий..." style="flex:1; padding:10px; background:#0a0e17; border:1px solid #2a3a4a; border-radius:8px;"><button class="btn btn-success" onclick="addFullscreenComment('${id}')">Отправить</button></div>` : `<p style="color:#e74c3c;">Комментирование запрещено</p>`) : `<p>Войдите чтобы комментировать</p>`}</div>`;
         viewer.classList.add('active');
     }
-    function addFullscreenComment(id) { let text = document.getElementById('fsCommentInput')?.value; if (text && currentUser && canUserComment(currentUser)) { comments.push({ id: 'c' + Date.now(), photoId: id, userId: currentUser.id, text: text, createdAt: Date.now() }); openFullscreen(id); } }
+    
+    async function addFullscreenComment(id) {
+        let text = document.getElementById('fsCommentInput')?.value;
+        if (text && currentUser && canUserComment(currentUser)) {
+            let newComment = { id: 'c' + Date.now() + '_' + Math.random().toString(36).substr(2, 6), photoId: id, userId: currentUser.id, text: text, createdAt: Date.now() };
+            await putToStore('comments', newComment);
+            comments.push(newComment);
+            openFullscreen(id);
+        } else if (!canUserComment(currentUser)) alert('Комментирование запрещено');
+    }
+    
     function closeFullscreen() { document.getElementById('fullscreenViewer').classList.remove('active'); }
     
     function showAuth() { document.getElementById('app').innerHTML = `<div style="max-width:450px; margin:80px auto; background:#0f141c; padding:35px; border-radius:24px; border:1px solid #2a3a4a; text-align:center;"><h2>Multi Spotting Site</h2><div style="background:#1a2332; padding:10px; border-radius:8px; margin:20px 0;"><div><strong>admin@multispotting.com</strong> / <strong>admin123</strong> (админ)</div><div><strong>moder@multispotting.com</strong> / <strong>moder123</strong> (модератор)</div><div><strong>demo@mail.ru</strong> / <strong>demo123</strong> (пользователь)</div></div><input id="loginEmail" placeholder="Email" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><input type="password" id="loginPassword" placeholder="Пароль" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><button class="btn btn-success" onclick="doLogin()" style="width:100%;">Войти</button><div style="margin-top:20px; cursor:pointer; color:#4a9eff;" onclick="showRegisterForm()">Регистрация</div></div>`; }
-    function doLogin() { let email = document.getElementById('loginEmail').value, password = document.getElementById('loginPassword').value, user = users.find(u => u.email === email && u.password === password); if (user) { currentUser = JSON.parse(JSON.stringify(user)); delete currentUser.password; saveSession(); renderMainApp(); } else alert('Неверный email или пароль'); }
+    async function doLogin() { let email = document.getElementById('loginEmail').value, password = document.getElementById('loginPassword').value, user = users.find(u => u.email === email && u.password === password); if (user) { currentUser = JSON.parse(JSON.stringify(user)); delete currentUser.password; saveSession(); renderMainApp(); } else alert('Неверный email или пароль'); }
     function showRegisterForm() { document.getElementById('app').innerHTML = `<div style="max-width:450px; margin:80px auto; background:#0f141c; padding:35px; border-radius:24px;"><h2 style="text-align:center;">Регистрация</h2><input id="regName" placeholder="Имя" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><input id="regEmail" placeholder="Email" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><input type="password" id="regPassword" placeholder="Пароль (мин. 4)" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><button class="btn btn-success" onclick="doRegister()" style="width:100%;">Зарегистрироваться</button><div style="margin-top:20px; text-align:center; cursor:pointer; color:#4a9eff;" onclick="showAuth()">Войти</div></div>`; }
-    function doRegister() { let name = document.getElementById('regName').value, email = document.getElementById('regEmail').value, password = document.getElementById('regPassword').value; if (!name || !email || password.length < 4) { alert('Заполните все поля'); return; } if (users.find(u => u.email === email)) { alert('Email уже используется'); return; } let newUser = { id: 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6), name, email, password, role: 'user', banVote: false, banComment: false, bio: '', city: '', website: '', telegram: '', createdAt: Date.now() }; users.push(newUser); alert('Регистрация успешна!'); showAuth(); }
+    async function doRegister() { let name = document.getElementById('regName').value, email = document.getElementById('regEmail').value, password = document.getElementById('regPassword').value; if (!name || !email || password.length < 4) { alert('Заполните все поля'); return; } if (users.find(u => u.email === email)) { alert('Email уже используется'); return; } let newUser = { id: 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6), name, email, password, role: 'user', banVote: false, banComment: false, bio: '', city: '', website: '', telegram: '', createdAt: Date.now() }; await putToStore('users', newUser); users.push(newUser); alert('Регистрация успешна!'); showAuth(); }
     function logout() { localStorage.removeItem('mss_user'); currentUser = null; showAuth(); }
     
-    function renderMainApp() {
+    async function renderMainApp() {
         if (!currentUser) { showAuth(); return; }
         updateNotifBadge();
         let roleBadge = '';
@@ -634,8 +818,13 @@
         renderHome();
     }
     
-    initData();
-    renderMainApp();
+    // ЗАПУСК
+    (async function() {
+        document.getElementById('app').innerHTML = '<div class="loading-overlay"><div class="loading-spinner"></div><div>Загрузка базы данных...</div></div>';
+        await initDB();
+        await loadAllData();
+        renderMainApp();
+    })();
     
     window.quickVote = quickVote; window.moderatePhoto = moderatePhoto; window.changeUserRole = changeUserRole; window.deleteUser = deleteUser;
     window.showCityPhotos = showCityPhotos; window.showCountryPhotos = showCountryPhotos; window.showVehiclePage = showVehiclePage;
