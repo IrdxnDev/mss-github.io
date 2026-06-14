@@ -17,6 +17,7 @@
         .notif-badge { position: absolute; top: -5px; right: -5px; background: #e74c3c; color: white; border-radius: 50%; padding: 2px 6px; font-size: 0.6rem; font-weight: bold; }
         .user-info { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
         .admin-badge { background: #e74c3c; padding: 2px 10px; border-radius: 20px; font-size: 0.65rem; font-weight: bold; }
+        .moder-badge { background: #3498db; padding: 2px 10px; border-radius: 20px; font-size: 0.65rem; font-weight: bold; }
         .banned-badge { background: #7f8c8d; padding: 2px 10px; border-radius: 20px; font-size: 0.65rem; font-weight: bold; }
         .side-menu { position: fixed; top: 0; right: -100%; width: 85%; max-width: 320px; height: 100%; background: #0a0e17; border-left: 1px solid #2a3a4a; transition: 0.3s ease; z-index: 200; padding: 20px; overflow-y: auto; }
         .side-menu.open { right: 0; }
@@ -140,9 +141,14 @@
     function getStateClass(state) { return VEHICLE_STATES[state]?.class || 'state-unknown'; }
     function getStateIcon(state) { return VEHICLE_STATES[state]?.icon || 'fa-question'; }
     
+    // Права доступа
+    function canModerate(user) { return user && (user.role === 'admin' || user.role === 'moderator'); }
+    function canEditUsers(user) { return user && user.role === 'admin'; }
+    
     function initData() {
         users = [
             { id: 'admin1', name: 'Администратор', email: 'admin@multispotting.com', password: 'admin123', role: 'admin', banVote: false, banComment: false, bio: 'Главный администратор сайта', city: 'Москва', website: 'https://multispotting.com', telegram: '@multispotting', createdAt: Date.now() },
+            { id: 'moder1', name: 'Фотомодератор', email: 'moder@multispotting.com', password: 'moder123', role: 'moderator', banVote: false, banComment: false, bio: 'Проверяю и редактирую фото', city: 'Санкт-Петербург', website: '', telegram: '@moder', createdAt: Date.now() },
             { id: 'demo1', name: 'Демо Пользователь', email: 'demo@mail.ru', password: 'demo123', role: 'user', banVote: false, banComment: false, bio: 'Люблю фотографировать технику и делиться снимками', city: 'Минск', website: '', telegram: '@demo', createdAt: Date.now() }
         ];
         
@@ -234,7 +240,7 @@
     
     function toggleBanVote(userId) {
         let user = users.find(u => u.id === userId);
-        if (user && user.id !== currentUser.id) {
+        if (user && canEditUsers(currentUser) && user.id !== currentUser.id) {
             user.banVote = !user.banVote;
             showToast(`Голосование ${user.banVote ? 'запрещено' : 'разрешено'} для ${user.name}`);
             if (window.currentView === 'profile') showUserProfile(userId);
@@ -244,7 +250,7 @@
     
     function toggleBanComment(userId) {
         let user = users.find(u => u.id === userId);
-        if (user && user.id !== currentUser.id) {
+        if (user && canEditUsers(currentUser) && user.id !== currentUser.id) {
             user.banComment = !user.banComment;
             showToast(`Комментирование ${user.banComment ? 'запрещено' : 'разрешено'} для ${user.name}`);
             if (window.currentView === 'profile') showUserProfile(userId);
@@ -276,7 +282,7 @@
     
     function moderatePhoto(id, status, note) {
         let photo = allPhotos.find(p => p.id === id);
-        if (photo) {
+        if (photo && canModerate(currentUser)) {
             photo.status = status;
             photo.moderationNote = note || '';
             let msg = status === 'approved' ? `Ваше фото "${photo.vehicle}" одобрено!` : (status === 'conditional' ? `Ваше фото "${photo.vehicle}" принято условно. Замечание: ${note || 'нет'}` : `Ваше фото "${photo.vehicle}" отклонено. Причина: ${note || 'не указана'}`);
@@ -288,6 +294,7 @@
     }
     
     function editVehicleProfile(vehicleName) {
+        if (!canEditUsers(currentUser)) return;
         let profile = vehiclesProfiles[vehicleName] || {};
         let stateOptions = Object.keys(VEHICLE_STATES).map(s => `<option value="${s}" ${profile.state===s?'selected':''}>${getStateText(s)}</option>`).join('');
         let modal = document.createElement('div'); modal.className = 'edit-modal';
@@ -340,22 +347,53 @@
         showVehiclePage(vehicleName);
     }
     
-    function approveEditRequest(requestId) { let req = editRequests.find(r => r.id == requestId); if (req) { vehiclesProfiles[req.vehicleName] = { vehicle: req.vehicleName, ...req.changes }; req.status = 'approved'; addNotification(req.userId, 'Заявка одобрена', `Ваше предложение по ТС "${req.vehicleName}" принято`); showToast('Заявка одобрена'); showAdminPanel(); } }
-    function rejectEditRequest(requestId) { let req = editRequests.find(r => r.id == requestId); if (req) { req.status = 'rejected'; addNotification(req.userId, 'Заявка отклонена', `Ваше предложение по ТС "${req.vehicleName}" отклонено`); showToast('Заявка отклонена'); showAdminPanel(); } }
-    function editPhoto(photoId) { let photo = allPhotos.find(p => p.id === photoId); if (!photo || currentUser?.role !== 'admin') return; let modal = document.createElement('div'); modal.className = 'edit-modal'; modal.innerHTML = `<div><h3>Редактировать фото</h3><div class="form-group"><label>Транспорт</label><input id="editVeh" value="${escapeHtml(photo.vehicle)}"></div><div class="form-group"><label>Страна</label><input id="editCountry" value="${escapeHtml(photo.loc.country || '')}"></div><div class="form-group"><label>Город</label><input id="editCity" value="${escapeHtml(photo.loc.city || '')}"></div><div class="form-group"><label>Улица</label><input id="editStreet" value="${escapeHtml(photo.loc.street || '')}"></div><button class="btn btn-success" onclick="savePhotoEdit('${photoId}')">Сохранить</button><button class="btn" onclick="this.closest('.edit-modal').remove()">Отмена</button></div>`; document.body.appendChild(modal); }
-    function savePhotoEdit(photoId) { let photo = allPhotos.find(p => p.id === photoId); if (photo) { photo.vehicle = document.getElementById('editVeh').value.trim(); photo.loc.country = document.getElementById('editCountry').value; photo.loc.city = document.getElementById('editCity').value; photo.loc.street = document.getElementById('editStreet').value; if (!vehiclesProfiles[photo.vehicle]) vehiclesProfiles[photo.vehicle] = { vehicle: photo.vehicle, model: photo.vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' }; showToast('Фото обновлено'); document.querySelector('.edit-modal')?.remove(); refreshCurrentView(); } }
-    function deletePhoto(photoId) { if (currentUser?.role !== 'admin') return; if (confirm('Удалить это фото?')) { allPhotos = allPhotos.filter(p => p.id !== photoId); votes = votes.filter(v => v.photoId !== photoId); comments = comments.filter(c => c.photoId !== photoId); showToast('Фото удалено'); refreshCurrentView(); } }
+    function approveEditRequest(requestId) { let req = editRequests.find(r => r.id == requestId); if (req && canEditUsers(currentUser)) { vehiclesProfiles[req.vehicleName] = { vehicle: req.vehicleName, ...req.changes }; req.status = 'approved'; addNotification(req.userId, 'Заявка одобрена', `Ваше предложение по ТС "${req.vehicleName}" принято`); showToast('Заявка одобрена'); showAdminPanel(); } }
+    function rejectEditRequest(requestId) { let req = editRequests.find(r => r.id == requestId); if (req && canEditUsers(currentUser)) { req.status = 'rejected'; addNotification(req.userId, 'Заявка отклонена', `Ваше предложение по ТС "${req.vehicleName}" отклонено`); showToast('Заявка отклонена'); showAdminPanel(); } }
+    
+    function editPhoto(photoId) {
+        if (!canModerate(currentUser)) return;
+        let photo = allPhotos.find(p => p.id === photoId);
+        if (!photo) return;
+        let modal = document.createElement('div'); modal.className = 'edit-modal';
+        modal.innerHTML = `<div><h3>Редактировать фото</h3><div class="form-group"><label>Транспорт</label><input id="editVeh" value="${escapeHtml(photo.vehicle)}"></div><div class="form-group"><label>Страна</label><input id="editCountry" value="${escapeHtml(photo.loc.country || '')}"></div><div class="form-group"><label>Город</label><input id="editCity" value="${escapeHtml(photo.loc.city || '')}"></div><div class="form-group"><label>Улица</label><input id="editStreet" value="${escapeHtml(photo.loc.street || '')}"></div><button class="btn btn-success" onclick="savePhotoEdit('${photoId}')">Сохранить</button><button class="btn" onclick="this.closest('.edit-modal').remove()">Отмена</button></div>`;
+        document.body.appendChild(modal);
+    }
+    
+    function savePhotoEdit(photoId) {
+        let photo = allPhotos.find(p => p.id === photoId);
+        if (photo && canModerate(currentUser)) {
+            photo.vehicle = document.getElementById('editVeh').value.trim();
+            photo.loc.country = document.getElementById('editCountry').value;
+            photo.loc.city = document.getElementById('editCity').value;
+            photo.loc.street = document.getElementById('editStreet').value;
+            if (!vehiclesProfiles[photo.vehicle]) vehiclesProfiles[photo.vehicle] = { vehicle: photo.vehicle, model: photo.vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
+            showToast('Фото обновлено');
+            document.querySelector('.edit-modal')?.remove();
+            refreshCurrentView();
+        }
+    }
+    
+    function deletePhoto(photoId) {
+        if (!canModerate(currentUser)) return;
+        if (confirm('Удалить это фото?')) {
+            allPhotos = allPhotos.filter(p => p.id !== photoId);
+            votes = votes.filter(v => v.photoId !== photoId);
+            comments = comments.filter(c => c.photoId !== photoId);
+            showToast('Фото удалено');
+            refreshCurrentView();
+        }
+    }
     
     function photoCard(photo, showModActions = false, isAdminView = false) {
         let author = users.find(u => u.id === photo.userId);
         let userVote = getUserVote(photo.id);
         let canVote = currentUser && canUserVote(currentUser);
         let modActions = '';
-        if (showModActions && currentUser?.role === 'admin' && photo.status === 'pending') {
+        if (showModActions && canModerate(currentUser) && photo.status === 'pending') {
             modActions = `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;"><button class="btn btn-success" onclick="event.stopPropagation(); moderatePhoto('${photo.id}', 'approved', '')">Одобрить</button><button class="btn btn-warning" onclick="event.stopPropagation(); showModerationNoteModal('${photo.id}', 'conditional')">Условно</button><button class="btn btn-danger" onclick="event.stopPropagation(); showModerationNoteModal('${photo.id}', 'rejected')">Отклонить</button></div>`;
         }
         let adminActions = '';
-        if (isAdminView && currentUser?.role === 'admin') {
+        if ((isAdminView || showModActions) && canModerate(currentUser)) {
             adminActions = `<div style="margin-top:10px; display:flex; gap:8px;"><button class="btn" onclick="event.stopPropagation(); editPhoto('${photo.id}')">Редактировать</button><button class="btn btn-danger" onclick="event.stopPropagation(); deletePhoto('${photo.id}')">Удалить</button></div>`;
         }
         let modNoteHtml = '';
@@ -457,7 +495,7 @@
         window.currentVehicle = vehicle;
         let photos = allPhotos.filter(p => p.status === 'approved' && p.vehicle === vehicle);
         let profile = vehiclesProfiles[vehicle] || { model: vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
-        let isAdmin = currentUser?.role === 'admin';
+        let isAdmin = canEditUsers(currentUser);
         document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-truck"></i> ${vehicle}</h2><div style="background:#0a0e17; padding:20px; border-radius:16px; margin-bottom:24px;"><div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:15px;"><div><strong>Модель:</strong> ${profile.model}</div><div><strong>Год:</strong> ${profile.year}</div><div><strong>Двигатель:</strong> ${profile.engine}</div><div><strong>Состояние:</strong> <span class="vehicle-state-badge ${getStateClass(profile.state)}"><i class="fas ${getStateIcon(profile.state)}"></i> ${getStateText(profile.state)}</span></div><div><strong>Назначение:</strong> ${profile.purpose}</div></div><div style="margin-top:15px;">${isAdmin ? `<button class="btn" onclick="editVehicleProfile('${escapeHtml(vehicle)}')">Редактировать ТС</button>` : `<button class="btn" onclick="requestVehicleEdit('${escapeHtml(vehicle)}')">Предложить изменение</button>`}</div></div><h3>Фотографии (${photos.length})</h3><div class="photo-grid">${photos.map(p => photoCard(p)).join('') || '<div>Нет фото</div>'}</div><button class="btn" onclick="renderHome()">На главную</button></div>`;
     }
     
@@ -468,11 +506,12 @@
         if (!user) return;
         let userPhotos = allPhotos.filter(p => p.userId === userId && p.status === 'approved');
         let isOwn = currentUser?.id === userId;
-        let isAdmin = currentUser?.role === 'admin';
+        let isAdmin = canEditUsers(currentUser);
+        let canManage = isAdmin && !isOwn;
         document.getElementById('mainContent').innerHTML = `<div class="section">
             <div style="display:flex; gap:25px; align-items:center; flex-wrap:wrap; margin-bottom:25px;">
                 <div style="font-size:5rem; color:#4a9eff;"><i class="fas fa-user-circle"></i></div>
-                <div><h3>${user.name}</h3><div>${user.email}</div><div>Роль: ${user.role === 'admin' ? 'Администратор' : 'Пользователь'}</div><div>Фото: ${userPhotos.length}</div><div>Голосование: ${user.banVote ? 'Запрещено' : 'Разрешено'}</div><div>Комментарии: ${user.banComment ? 'Запрещены' : 'Разрешены'}</div></div>
+                <div><h3>${user.name}</h3><div>${user.email}</div><div>Роль: ${user.role === 'admin' ? 'Администратор' : (user.role === 'moderator' ? 'Фотомодератор' : 'Пользователь')}</div><div>Фото: ${userPhotos.length}</div><div>Голосование: ${user.banVote ? 'Запрещено' : 'Разрешено'}</div><div>Комментарии: ${user.banComment ? 'Запрещены' : 'Разрешены'}</div></div>
             </div>
             ${user.bio ? `<div style="background:#0a0e17; padding:15px; border-radius:12px; margin-bottom:20px; border-left:3px solid #4a9eff;"><strong>О себе:</strong><br>${escapeHtml(user.bio)}</div>` : ''}
             <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:10px; margin-bottom:20px;">
@@ -481,7 +520,7 @@
                 ${user.telegram ? `<div class="profile-field"><div class="profile-label">Telegram</div><div class="profile-value">${escapeHtml(user.telegram)}</div></div>` : ''}
             </div>
             ${isOwn ? `<button class="btn" onclick="editProfile()">Редактировать профиль</button>` : ''}
-            ${isAdmin && !isOwn ? `<div style="margin-top:20px; padding:15px; background:#1a2332; border-radius:12px;"><h4>Администрирование</h4><div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:10px;"><button class="btn ${user.banVote ? 'btn-success' : 'btn-danger'}" onclick="toggleBanVote('${user.id}')">${user.banVote ? 'Снять запрет голосования' : 'Запретить голосование'}</button><button class="btn ${user.banComment ? 'btn-success' : 'btn-danger'}" onclick="toggleBanComment('${user.id}')">${user.banComment ? 'Снять запрет комментариев' : 'Запретить комментарии'}</button><button class="btn btn-danger" onclick="if(confirm('Удалить пользователя?')) deleteUser('${user.id}')">Удалить пользователя</button></div></div>` : ''}
+            ${canManage ? `<div style="margin-top:20px; padding:15px; background:#1a2332; border-radius:12px;"><h4>Администрирование</h4><div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:10px;"><button class="btn ${user.banVote ? 'btn-success' : 'btn-danger'}" onclick="toggleBanVote('${user.id}')">${user.banVote ? 'Снять запрет голосования' : 'Запретить голосование'}</button><button class="btn ${user.banComment ? 'btn-success' : 'btn-danger'}" onclick="toggleBanComment('${user.id}')">${user.banComment ? 'Снять запрет комментариев' : 'Запретить комментарии'}</button><button class="btn btn-danger" onclick="if(confirm('Удалить пользователя?')) deleteUser('${user.id}')">Удалить пользователя</button></div></div>` : ''}
             <h3 style="margin-top:20px;">Фотографии пользователя</h3>
             <div class="photo-grid">${userPhotos.map(p => photoCard(p)).join('') || '<div>Нет фото</div>'}</div>
             <button class="btn" onclick="renderHome()" style="margin-top:20px;">На главную</button>
@@ -503,8 +542,8 @@
             let newPhoto = { id: 'p' + Date.now() + '_' + Math.random().toString(36).substr(2, 6), userId: currentUser.id, url: e.target.result, thumb: e.target.result, vehicle, loc: { country: document.getElementById('uploadCountry').value, city: document.getElementById('uploadCity').value, street: document.getElementById('uploadStreet').value }, status: 'pending', rating: 0, likes: 0, dislikes: 0, views: 0, createdAt: Date.now(), moderationNote: '' };
             allPhotos.push(newPhoto);
             if (!vehiclesProfiles[vehicle]) vehiclesProfiles[vehicle] = { vehicle, model: vehicle, year: '—', engine: '—', state: 'unknown', purpose: '—' };
-            let admin = users.find(u => u.role === 'admin');
-            if (admin) addNotification(admin.id, 'Новое фото', `Пользователь ${currentUser.name} загрузил фото: ${vehicle}`);
+            let admins = users.filter(u => u.role === 'admin' || u.role === 'moderator');
+            admins.forEach(admin => addNotification(admin.id, 'Новое фото', `Пользователь ${currentUser.name} загрузил фото: ${vehicle}`));
             showToast('Фото отправлено на модерацию');
             renderHome();
         };
@@ -515,20 +554,23 @@
     function showMyPhotos() { showJournal(); }
     function showStatistics() { let approved = allPhotos.filter(p => p.status === 'approved'); document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-chart-pie"></i> Статистика</h2><div class="admin-stats"><div class="stat-card"><div class="stat-number">${approved.length}</div><div>Одобрено</div></div><div class="stat-card"><div class="stat-number">${allPhotos.filter(p=>p.status==='pending').length}</div><div>На модерации</div></div><div class="stat-card"><div class="stat-number">${users.length}</div><div>Пользователей</div></div></div><button class="btn" onclick="renderHome()">На главную</button></div>`; }
     
-    function showSwitchUserPanel() { document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-exchange-alt"></i> Сменить пользователя</h2><div style="display:flex; flex-direction:column; gap:10px;">${users.map(u => `<div class="user-card" style="cursor:pointer;" onclick="switchToUser('${u.id}')"><i class="fas fa-user-circle"></i> <strong>${u.name}</strong> (${u.email})</div>`).join('')}</div><button class="btn" onclick="renderHome()">На главную</button></div>`; }
+    function showSwitchUserPanel() { document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-exchange-alt"></i> Сменить пользователя</h2><div style="display:flex; flex-direction:column; gap:10px;">${users.map(u => `<div class="user-card" style="cursor:pointer;" onclick="switchToUser('${u.id}')"><i class="fas fa-user-circle"></i> <strong>${u.name}</strong> (${u.email}) - ${u.role === 'admin' ? 'Админ' : (u.role === 'moderator' ? 'Модератор' : 'Пользователь')}</div>`).join('')}</div><button class="btn" onclick="renderHome()">На главную</button></div>`; }
     function switchToUser(userId) { let user = users.find(u => u.id === userId); if (user) { currentUser = JSON.parse(JSON.stringify(user)); delete currentUser.password; saveSession(); showToast(`Переключено на ${user.name}`); renderMainApp(); } }
     
     function showAdminPanel() {
-        if (currentUser?.role !== 'admin') return;
+        if (!canModerate(currentUser)) return;
         window.currentView = 'admin';
         let pending = allPhotos.filter(p => p.status === 'pending');
         let pendingRequests = editRequests.filter(r => r.status === 'pending');
-        document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-cogs"></i> Админ-панель</h2><div class="admin-stats"><div class="stat-card"><div class="stat-number">${users.length}</div><div>Пользователей</div></div><div class="stat-card"><div class="stat-number">${allPhotos.length}</div><div>Всего фото</div></div><div class="stat-card"><div class="stat-number">${pending.length}</div><div>На модерации</div></div><div class="stat-card"><div class="stat-number">${pendingRequests.length}</div><div>Заявки</div></div></div><div class="tabs"><button class="tab-btn active" onclick="switchAdminTab('moderation')">Модерация (${pending.length})</button><button class="tab-btn" onclick="switchAdminTab('requests')">Заявки (${pendingRequests.length})</button><button class="tab-btn" onclick="switchAdminTab('users')">Пользователи</button><button class="tab-btn" onclick="switchAdminTab('all')">Все фото</button></div><div id="adminTabContent"></div><button class="btn" onclick="renderHome()" style="margin-top:20px;">На главную</button></div>`;
+        let isFullAdmin = canEditUsers(currentUser);
+        
+        document.getElementById('mainContent').innerHTML = `<div class="section"><h2><i class="fas fa-cogs"></i> Панель модерации</h2><div class="admin-stats"><div class="stat-card"><div class="stat-number">${allPhotos.length}</div><div>Всего фото</div></div><div class="stat-card"><div class="stat-number">${pending.length}</div><div>На модерации</div></div>${isFullAdmin ? `<div class="stat-card"><div class="stat-number">${users.length}</div><div>Пользователей</div></div><div class="stat-card"><div class="stat-number">${pendingRequests.length}</div><div>Заявки</div></div>` : ''}</div><div class="tabs"><button class="tab-btn active" onclick="switchAdminTab('moderation')">Модерация (${pending.length})</button>${isFullAdmin ? `<button class="tab-btn" onclick="switchAdminTab('requests')">Заявки (${pendingRequests.length})</button><button class="tab-btn" onclick="switchAdminTab('users')">Пользователи</button>` : ''}<button class="tab-btn" onclick="switchAdminTab('all')">Все фото</button></div><div id="adminTabContent"></div><button class="btn" onclick="renderHome()" style="margin-top:20px;">На главную</button></div>`;
+        
         window.switchAdminTab = function(tab) {
             let content = document.getElementById('adminTabContent');
             if (tab === 'moderation') content.innerHTML = `<div class="photo-grid">${pending.map(p => photoCard(p, true)).join('') || '<div>Нет фото</div>'}</div>`;
-            else if (tab === 'requests') content.innerHTML = `<div>${pendingRequests.map(r => `<div class="user-card" style="flex-direction:column;"><div><strong>ТС:</strong> ${r.vehicleName}</div><div><strong>Пользователь:</strong> ${r.userName}</div><div><strong>Обоснование:</strong> ${r.reason || 'Без пояснения'}</div><div style="margin-top:10px; padding:10px; background:#0f141c; border-radius:8px;">${Object.entries(r.changes).map(([k,v]) => `<div><strong>${k}:</strong> ${v || '—'}</div>`).join('')}</div><div style="margin-top:10px;"><button class="btn btn-success" onclick="approveEditRequest('${r.id}')">Одобрить</button><button class="btn btn-danger" onclick="rejectEditRequest('${r.id}')">Отклонить</button></div></div>`).join('') || '<div>Нет заявок</div>'}</div>`;
-            else if (tab === 'users') content.innerHTML = users.map(u => `<div class="user-card"><i class="fas fa-user-circle fa-2x"></i><div><strong>${u.name}</strong><br><small>${u.email}</small><br>Роль: ${u.role}<br>Голосование: ${u.banVote ? 'Запрещено' : 'Разрешено'}<br>Комментарии: ${u.banComment ? 'Запрещены' : 'Разрешены'}</div><div style="margin-left:auto; display:flex; gap:8px;"><select id="role_${u.id}"><option ${u.role === 'user' ? 'selected' : ''}>user</option><option ${u.role === 'admin' ? 'selected' : ''}>admin</option></select><button class="btn" onclick="changeUserRole('${u.id}', document.getElementById('role_${u.id}').value)">Сохранить</button><button class="btn ${u.banVote ? 'btn-success' : 'btn-warning'}" onclick="toggleBanVote('${u.id}')">Голосование</button><button class="btn ${u.banComment ? 'btn-success' : 'btn-warning'}" onclick="toggleBanComment('${u.id}')">Комментарии</button>${u.id !== currentUser.id ? `<button class="btn btn-danger" onclick="deleteUser('${u.id}')">Удалить</button>` : ''}</div></div>`).join('');
+            else if (tab === 'requests' && isFullAdmin) content.innerHTML = `<div>${pendingRequests.map(r => `<div class="user-card" style="flex-direction:column;"><div><strong>ТС:</strong> ${r.vehicleName}</div><div><strong>Пользователь:</strong> ${r.userName}</div><div><strong>Обоснование:</strong> ${r.reason || 'Без пояснения'}</div><div style="margin-top:10px; padding:10px; background:#0f141c; border-radius:8px;">${Object.entries(r.changes).map(([k,v]) => `<div><strong>${k}:</strong> ${v || '—'}</div>`).join('')}</div><div style="margin-top:10px;"><button class="btn btn-success" onclick="approveEditRequest('${r.id}')">Одобрить</button><button class="btn btn-danger" onclick="rejectEditRequest('${r.id}')">Отклонить</button></div></div>`).join('') || '<div>Нет заявок</div>'}</div>`;
+            else if (tab === 'users' && isFullAdmin) content.innerHTML = users.map(u => `<div class="user-card"><i class="fas fa-user-circle fa-2x"></i><div><strong>${u.name}</strong><br><small>${u.email}</small><br>Роль: ${u.role === 'admin' ? 'Админ' : (u.role === 'moderator' ? 'Модератор' : 'Пользователь')}<br>Голосование: ${u.banVote ? 'Запрещено' : 'Разрешено'}<br>Комментарии: ${u.banComment ? 'Запрещены' : 'Разрешены'}</div><div style="margin-left:auto; display:flex; gap:8px;"><select id="role_${u.id}"><option ${u.role === 'user' ? 'selected' : ''}>user</option><option ${u.role === 'moderator' ? 'selected' : ''}>moderator</option><option ${u.role === 'admin' ? 'selected' : ''}>admin</option></select><button class="btn" onclick="changeUserRole('${u.id}', document.getElementById('role_${u.id}').value)">Сохранить</button><button class="btn ${u.banVote ? 'btn-success' : 'btn-warning'}" onclick="toggleBanVote('${u.id}')">Голосование</button><button class="btn ${u.banComment ? 'btn-success' : 'btn-warning'}" onclick="toggleBanComment('${u.id}')">Комментарии</button>${u.id !== currentUser.id ? `<button class="btn btn-danger" onclick="deleteUser('${u.id}')">Удалить</button>` : ''}</div></div>`).join('');
             else content.innerHTML = `<div class="photo-grid">${allPhotos.map(p => photoCard(p, false, true)).join('')}</div>`;
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             event.target.classList.add('active');
@@ -536,8 +578,29 @@
         switchAdminTab('moderation');
     }
     
-    function changeUserRole(userId, newRole) { let user = users.find(u => u.id === userId); if (user && user.id !== currentUser.id) { user.role = newRole; showToast(`Роль изменена`); showAdminPanel(); } }
-    function deleteUser(userId) { if (userId === currentUser.id) { alert('Нельзя удалить себя'); return; } if (confirm('Удалить пользователя и все его фото?')) { users = users.filter(u => u.id !== userId); allPhotos = allPhotos.filter(p => p.userId !== userId); votes = votes.filter(v => v.userId !== userId); comments = comments.filter(c => c.userId !== userId); notifications = notifications.filter(n => n.userId !== userId); showToast('Пользователь удалён'); showAdminPanel(); renderHome(); } }
+    function changeUserRole(userId, newRole) { 
+        let user = users.find(u => u.id === userId);
+        if (user && canEditUsers(currentUser) && user.id !== currentUser.id) {
+            user.role = newRole;
+            showToast(`Роль изменена на ${newRole === 'admin' ? 'Администратор' : (newRole === 'moderator' ? 'Модератор' : 'Пользователь')}`);
+            showAdminPanel();
+        }
+    }
+    
+    function deleteUser(userId) { 
+        if (!canEditUsers(currentUser)) return;
+        if (userId === currentUser.id) { alert('Нельзя удалить себя'); return; }
+        if (confirm('Удалить пользователя и все его фото?')) {
+            users = users.filter(u => u.id !== userId);
+            allPhotos = allPhotos.filter(p => p.userId !== userId);
+            votes = votes.filter(v => v.userId !== userId);
+            comments = comments.filter(c => c.userId !== userId);
+            notifications = notifications.filter(n => n.userId !== userId);
+            showToast('Пользователь удалён');
+            showAdminPanel();
+            renderHome();
+        }
+    }
     
     function openFullscreen(id) {
         let photo = allPhotos.find(p => p.id === id);
@@ -552,7 +615,7 @@
     function addFullscreenComment(id) { let text = document.getElementById('fsCommentInput')?.value; if (text && currentUser && canUserComment(currentUser)) { comments.push({ id: 'c' + Date.now(), photoId: id, userId: currentUser.id, text: text, createdAt: Date.now() }); openFullscreen(id); } }
     function closeFullscreen() { document.getElementById('fullscreenViewer').classList.remove('active'); }
     
-    function showAuth() { document.getElementById('app').innerHTML = `<div style="max-width:450px; margin:80px auto; background:#0f141c; padding:35px; border-radius:24px; border:1px solid #2a3a4a; text-align:center;"><h2>Multi Spotting Site</h2><div style="background:#1a2332; padding:10px; border-radius:8px; margin:20px 0;"><div><strong>admin@multispotting.com</strong> / <strong>admin123</strong> (админ)</div><div><strong>demo@mail.ru</strong> / <strong>demo123</strong> (пользователь)</div></div><input id="loginEmail" placeholder="Email" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><input type="password" id="loginPassword" placeholder="Пароль" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><button class="btn btn-success" onclick="doLogin()" style="width:100%;">Войти</button><div style="margin-top:20px; cursor:pointer; color:#4a9eff;" onclick="showRegisterForm()">Регистрация</div></div>`; }
+    function showAuth() { document.getElementById('app').innerHTML = `<div style="max-width:450px; margin:80px auto; background:#0f141c; padding:35px; border-radius:24px; border:1px solid #2a3a4a; text-align:center;"><h2>Multi Spotting Site</h2><div style="background:#1a2332; padding:10px; border-radius:8px; margin:20px 0;"><div><strong>admin@multispotting.com</strong> / <strong>admin123</strong> (админ)</div><div><strong>moder@multispotting.com</strong> / <strong>moder123</strong> (модератор)</div><div><strong>demo@mail.ru</strong> / <strong>demo123</strong> (пользователь)</div></div><input id="loginEmail" placeholder="Email" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><input type="password" id="loginPassword" placeholder="Пароль" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><button class="btn btn-success" onclick="doLogin()" style="width:100%;">Войти</button><div style="margin-top:20px; cursor:pointer; color:#4a9eff;" onclick="showRegisterForm()">Регистрация</div></div>`; }
     function doLogin() { let email = document.getElementById('loginEmail').value, password = document.getElementById('loginPassword').value, user = users.find(u => u.email === email && u.password === password); if (user) { currentUser = JSON.parse(JSON.stringify(user)); delete currentUser.password; saveSession(); renderMainApp(); } else alert('Неверный email или пароль'); }
     function showRegisterForm() { document.getElementById('app').innerHTML = `<div style="max-width:450px; margin:80px auto; background:#0f141c; padding:35px; border-radius:24px;"><h2 style="text-align:center;">Регистрация</h2><input id="regName" placeholder="Имя" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><input id="regEmail" placeholder="Email" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><input type="password" id="regPassword" placeholder="Пароль (мин. 4)" style="width:100%; padding:12px; margin:12px 0; background:#0a0e17; border:1px solid #2a3a4a; border-radius:10px; color:white;"><button class="btn btn-success" onclick="doRegister()" style="width:100%;">Зарегистрироваться</button><div style="margin-top:20px; text-align:center; cursor:pointer; color:#4a9eff;" onclick="showAuth()">Войти</div></div>`; }
     function doRegister() { let name = document.getElementById('regName').value, email = document.getElementById('regEmail').value, password = document.getElementById('regPassword').value; if (!name || !email || password.length < 4) { alert('Заполните все поля'); return; } if (users.find(u => u.email === email)) { alert('Email уже используется'); return; } let newUser = { id: 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6), name, email, password, role: 'user', banVote: false, banComment: false, bio: '', city: '', website: '', telegram: '', createdAt: Date.now() }; users.push(newUser); alert('Регистрация успешна!'); showAuth(); }
@@ -561,8 +624,11 @@
     function renderMainApp() {
         if (!currentUser) { showAuth(); return; }
         updateNotifBadge();
+        let roleBadge = '';
+        if (currentUser.role === 'admin') roleBadge = '<span class="admin-badge">ADMIN</span>';
+        else if (currentUser.role === 'moderator') roleBadge = '<span class="moder-badge">MODERATOR</span>';
         let banInfo = (!canUserVote(currentUser) && currentUser.role !== 'admin') ? '<span class="banned-badge">Голосование заблокировано</span>' : '';
-        document.getElementById('app').innerHTML = `<div class="header"><div class="logo-area" onclick="renderHome()"><i class="fas fa-camera-retro logo"></i><span class="site-title">Multi Spotting Site</span></div><div class="user-info"><span><i class="fas fa-user"></i> ${currentUser.name}</span>${currentUser.role === 'admin' ? '<span class="admin-badge">ADMIN</span>' : ''}${banInfo}<button class="menu-btn" id="menuToggleBtn"><i class="fas fa-bars"></i><span id="notifBadge" class="notif-badge"></span></button></div></div><div class="side-menu" id="sideMenu"><div class="menu-header"><span>Меню</span><button id="closeMenuBtn"><i class="fas fa-times"></i></button></div><ul class="menu-list"><li onclick="showUserProfile('${currentUser.id}')"><i class="fas fa-user"></i> Профиль</li><li onclick="showStatistics()"><i class="fas fa-chart-line"></i> Статистика</li><li onclick="showUploadForm()"><i class="fas fa-upload"></i> Загрузка</li><li onclick="showJournal()"><i class="fas fa-history"></i> Журнал</li><li onclick="showMyPhotos()"><i class="fas fa-images"></i> Мои фото</li><li onclick="showContest()"><i class="fas fa-trophy"></i> Конкурс</li><li onclick="showNotifications()"><i class="fas fa-bell"></i> Уведомления</li><li onclick="showSwitchUserPanel()"><i class="fas fa-exchange-alt"></i> Сменить пользователя</li>${currentUser.role === 'admin' ? '<li onclick="showAdminPanel()"><i class="fas fa-cogs"></i> Админ-панель</li>' : ''}<li onclick="logout()"><i class="fas fa-sign-out-alt"></i> Выход</li></ul></div><div class="container" id="mainContent"></div><div id="fullscreenViewer" class="fullscreen-viewer"></div>`;
+        document.getElementById('app').innerHTML = `<div class="header"><div class="logo-area" onclick="renderHome()"><i class="fas fa-camera-retro logo"></i><span class="site-title">Multi Spotting Site</span></div><div class="user-info"><span><i class="fas fa-user"></i> ${currentUser.name}</span>${roleBadge}${banInfo}<button class="menu-btn" id="menuToggleBtn"><i class="fas fa-bars"></i><span id="notifBadge" class="notif-badge"></span></button></div></div><div class="side-menu" id="sideMenu"><div class="menu-header"><span>Меню</span><button id="closeMenuBtn"><i class="fas fa-times"></i></button></div><ul class="menu-list"><li onclick="showUserProfile('${currentUser.id}')"><i class="fas fa-user"></i> Профиль</li><li onclick="showStatistics()"><i class="fas fa-chart-line"></i> Статистика</li><li onclick="showUploadForm()"><i class="fas fa-upload"></i> Загрузка</li><li onclick="showJournal()"><i class="fas fa-history"></i> Журнал</li><li onclick="showMyPhotos()"><i class="fas fa-images"></i> Мои фото</li><li onclick="showContest()"><i class="fas fa-trophy"></i> Конкурс</li><li onclick="showNotifications()"><i class="fas fa-bell"></i> Уведомления</li><li onclick="showSwitchUserPanel()"><i class="fas fa-exchange-alt"></i> Сменить пользователя</li>${canModerate(currentUser) ? '<li onclick="showAdminPanel()"><i class="fas fa-cogs"></i> Модерация</li>' : ''}<li onclick="logout()"><i class="fas fa-sign-out-alt"></i> Выход</li></ul></div><div class="container" id="mainContent"></div><div id="fullscreenViewer" class="fullscreen-viewer"></div>`;
         document.getElementById('menuToggleBtn').onclick = () => document.getElementById('sideMenu').classList.add('open');
         document.getElementById('closeMenuBtn').onclick = () => document.getElementById('sideMenu').classList.remove('open');
         renderHome();
