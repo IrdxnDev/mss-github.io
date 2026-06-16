@@ -131,8 +131,6 @@
         .comment-actions .del-comment:hover { background: #3a1a1a; color: #ff6b6b; }
         .map-pin { cursor: pointer; color: #4f9fff; font-weight: 500; }
         .map-pin:hover { text-decoration: underline; }
-        
-        /* Новая страница фото */
         .photo-page { display: flex; flex-direction: column; gap: 24px; }
         .photo-page-main { display: flex; flex-wrap: wrap; gap: 30px; }
         .photo-page-image { flex: 1.8; min-width: 300px; }
@@ -154,10 +152,6 @@
         .collapse-content td { padding: 6px 8px; border-bottom: 1px solid #1a2633; }
         .collapse-content td:first-child { color: #9aafc4; width: 40%; }
         .collapse-content td:last-child { font-weight: 500; }
-        .photo-tags { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
-        .photo-tag { background: #1a2633; padding: 4px 14px; border-radius: 30px; font-size: 0.75rem; border: 1px solid #2a3d4f; }
-        .photo-actions-bar { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
-        .photo-actions-bar .btn { font-size: 0.85rem; padding: 8px 18px; }
         .similar-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; }
         .similar-photos img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; cursor: pointer; border: 1px solid #2a3d4f; transition: 0.2s; }
         .similar-photos img:hover { transform: scale(1.03); border-color: #4f9fff; }
@@ -171,8 +165,8 @@
 <div id="app"><div class="loading-overlay"><div class="loading-spinner"></div><div>Загрузка данных...</div></div></div>
 
 <script>
-    // ========== VERSION 7.0 — ТОЛЬКО ЛАЙКИ/ДИЗЛАЙКИ, БЕЗ ЗВЁЗД ==========
-    console.log('Multi Spotting Site v7.0 — только + / - лайки');
+    // ========== VERSION 8.0 — ПОЛНАЯ ВЕРСИЯ СО ВСЕМИ ФУНКЦИЯМИ ==========
+    console.log('Multi Spotting Site v8.0 — Все функции: карта, сворачиваемая информация, лайки +/-, удаление комментариев');
     
     let db = null;
     let currentUser = null;
@@ -185,7 +179,7 @@
     let vehiclesProfiles = {};
     
     const DB_NAME = 'MultiSpottingDB';
-    const DB_VERSION = 7;
+    const DB_VERSION = 8;
     
     const VEHICLE_STATES = {
         oper: { ru: 'Эксплуатируется', icon: 'fa-play-circle', class: 'state-oper' },
@@ -575,7 +569,7 @@
         }
     }
     
-    // ========== НОВАЯ СТРАНИЦА ФОТО (только лайки/дизлайки) ==========
+    // ========== НОВАЯ СТРАНИЦА ФОТО ==========
     function showPhotoPage(photoId) {
         let photo = allPhotos.find(p => p.id === photoId);
         if (!photo) { renderHome(); return; }
@@ -1036,7 +1030,7 @@
     
     // ========== ЗАПУСК ==========
     (async function() {
-        document.getElementById('app').innerHTML = '<div class="loading-overlay"><div class="loading-spinner"></div><div>Загрузка базы данных...</div></div>';
+        document.getElementById('app').innerHTML = '<div class="loading-overlay"><div class="loading-spinner"></div><div>Загрузка данных...</div></div>';
         await initDB();
         await loadAllData();
         renderMainApp();
